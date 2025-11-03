@@ -27,8 +27,15 @@ The labs focus on configuring routers, understanding basic network topologies, a
 
 ---
 
-## 🌐 Partial Exam 2 – 
+## 🌐 Partial Exam 2 – BGP w/ Policy
 
+This section includes the labs used to prepare for the **second midterm**, focused on the **BGP** (Border Gateway Protocol) and routing **policy** configuration.
+The exercises cover BGP setup in multi-AS environments, route filtering and preference management, and the implementation of import/export policies to control inter-domain traffic behavior.
+
+**LABS:**
+
+- ⚙️ [HOUR GLASS (BGP)](./Correct%20LABS/%E2%9C%93%20HOUR%20GLASS%20%BGP%20/)
+- ⚙️ [PAPILLON (BGP)](./Correct%20LABS/%E2%9C%93%PAPILLON%20%BGP%20/)
 
 
 
