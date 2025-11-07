@@ -542,8 +542,8 @@ def auto_generate_bgp_neighbors(base_path, routers):
                 r2, ip2, asn2 = members[j]
                 if "bgp" not in routers[r1]["protocols"] or "bgp" not in routers[r2]["protocols"]:
                     continue
-                add_neighbor_if_missing(base_path, r1, ip2, routers[r2]['asn'], desc=f"Router {routers[r2]['asn']}{r2}")
-                add_neighbor_if_missing(base_path, r2, ip1, routers[r1]['asn'], desc=f"Router {routers[r1]['asn']}{r1}")
+                add_neighbor_if_missing(base_path, r1, ip2, routers[r2]['asn'], desc=f"Router AS{routers[r2]['asn']}{r2}")
+                add_neighbor_if_missing(base_path, r2, ip1, routers[r1]['asn'], desc=f"Router AS{routers[r1]['asn']}{r1}")
 
 def add_neighbor_if_missing(base_path, src_router, neigh_ip, neigh_asn, desc=None):
     fpath = os.path.join(base_path, src_router, "etc", "frr", "frr.conf")
@@ -854,10 +854,24 @@ def main():
 
     
 
+    # prepara l'insieme dei nomi già usati (router names)
+    used_names = set(routers.keys())
+
     # Hosts
     for h in range(1, n_host + 1):
-        hname = f"host{h}"
-        print(f"\n--- Configurazione host {hname} ---")
+        default_hname = f"host{h}"
+        while True:
+            hname_in = input(f"\nNome host (default {default_hname}): ").strip()
+            hname = hname_in if hname_in else default_hname
+            if ' ' in hname:
+                print("Il nome non può contenere spazi.")
+                continue
+            if hname in used_names:
+                print(f"Nome '{hname}' già usato. Scegli un altro.")
+                continue
+            break
+        used_names.add(hname)
+        print(f"--- Configurazione host {hname} ---")
         ip = valida_ip_cidr(f"IP per {hname} (es. 192.168.10.{h}/24): ")
         gw = valida_ip_cidr(f"Gateway per {hname} (es. 192.168.10.1/24): ")
         lan = input_non_vuoto("LAN associata (es. A): ").upper()
@@ -868,8 +882,19 @@ def main():
 
     # WWW servers
     for w in range(1, n_www + 1):
-        wname = f"www{w}"
-        print(f"\n--- Configurazione webserver {wname} ---")
+        default_wname = f"www{w}"
+        while True:
+            wname_in = input(f"\nNome webserver (default {default_wname}): ").strip()
+            wname = wname_in if wname_in else default_wname
+            if ' ' in wname:
+                print("Il nome non può contenere spazi.")
+                continue
+            if wname in used_names:
+                print(f"Nome '{wname}' già usato. Scegli un altro.")
+                continue
+            break
+        used_names.add(wname)
+        print(f"--- Configurazione webserver {wname} ---")
         ip = valida_ip_cidr(f"IP per {wname} (es. 10.10.{w}.1/24): ")
         gw = valida_ip_cidr(f"Gateway per {wname} (es. 10.10.{w}.254/24): ")
         lan = input_non_vuoto("LAN associata (es. Z): ").upper()
