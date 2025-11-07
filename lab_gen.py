@@ -241,69 +241,69 @@ def mk_bgp_stanza(asn, redistribute=None, networks=None):
     # secondo la policy di copertura richiesta dall'utente)
     if networks:
         try:
-            from ipaddress import ip_network
+            from ipaddress import ip_network, IPv4Network, IPv6Network
             nets = [ip_network(n) for n in networks]
-            # consideriamo solo IPv4 per questa compressione
-            ipv4_nets = [n for n in nets if isinstance(n, ipaddress.IPv4Network)]
+            ipv4_nets = [n for n in nets if isinstance(n, IPv4Network)]
+            ipv6_nets = [n for n in nets if isinstance(n, IPv6Network)]
+
+            # Gestione IPv4: valutiamo se usare un byte-aligned supernet (/24,/16,/8)
+            # basandoci sulle reti originali (non solo sul risultato del collapse)
             if ipv4_nets:
-                min_addr = min((n.network_address for n in ipv4_nets))
-                max_addr = max((n.broadcast_address for n in ipv4_nets))
+                collapsed = list(ipaddress.collapse_addresses(ipv4_nets))
+                # Calcola range (min/max) sulle reti originali per permettere
+                # di scegliere un supernet più ampio anche quando il collapse
+                # ha prodotto un singolo network (es. due /24 adiacenti -> /23)
+                min_addr = min(n.network_address for n in ipv4_nets)
+                max_addr = max(n.broadcast_address for n in ipv4_nets)
+
+                # cerca candidati allineati /24, /16, /8 (preferiamo la più specifica tra queste)
+                chosen = None
+                for cand in (24, 16, 8):
+                    mask = ((0xFFFFFFFF << (32 - cand)) & 0xFFFFFFFF)
+                    aligned_int = int(min_addr) & mask
+                    cand_net = IPv4Network((aligned_int, cand))
+                    if int(cand_net.network_address) <= int(min_addr) and int(cand_net.broadcast_address) >= int(max_addr):
+                        chosen = cand_net
+                        break
+
+                # calcola il prefix minimo che copre l'intervallo
                 xor = int(min_addr) ^ int(max_addr)
                 if xor == 0:
+                    # tutte le reti sono identiche
                     prefixlen = ipv4_nets[0].prefixlen
                 else:
                     prefixlen = 32 - xor.bit_length()
-                # se il supernet è più ampio (prefixlen più piccolo) rispetto alle reti
-                # originali, usalo; altrimenti mantieni le reti originali
+
                 min_orig = min(n.prefixlen for n in ipv4_nets)
-                if prefixlen < min_orig:
-                    net_addr_int = int(min_addr) & (~((1 << (32 - prefixlen)) - 1))
-                    supern = ipaddress.IPv4Network((net_addr_int, prefixlen))
-                    # preferisci aggregazioni byte-aligned (/24,/16,/8) quanto possibile
-                    chosen = None
-                    for cand in (24, 16, 8):
-                        mask = (~((1 << (32 - cand)) - 1)) & ((1 << 32) - 1)
-                        aligned_int = int(min_addr) & mask
-                        cand_net = ipaddress.IPv4Network((aligned_int, cand))
-                        if int(cand_net.network_address) <= int(min_addr) and int(cand_net.broadcast_address) >= int(max_addr):
-                            chosen = cand_net
-                            break
-                    if chosen is not None:
-                        lines.append(f"    network {chosen}")
-                    else:
-                        lines.append(f"    network {supern}")
+
+                # preferiamo un candidato byte-aligned se copre l'intervallo e
+                # non è troppo ampio (soglia minima /8)
+                if chosen is not None and chosen.prefixlen < min_orig and chosen.prefixlen >= 8:
+                    lines.append(f"    network {str(chosen)}")
                 else:
-                    nets_seen = set()
-                    for net in networks:
-                        if net not in nets_seen:
-                            lines.append(f"    network {net}")
-                            nets_seen.add(net)
-            else:
-                # fallback: scrivi le network originali (IPv6 non compactate)
-                nets_seen = set()
-                for net in networks:
-                    if net not in nets_seen:
-                        lines.append(f"    network {net}")
-                        nets_seen.add(net)
+                    # se il supernet calcolato è più ampio delle reti originali ed è >= /8, usalo
+                    if prefixlen < min_orig and prefixlen >= 8:
+                        net_addr_int = int(min_addr) & (((0xFFFFFFFF << (32 - prefixlen)) & 0xFFFFFFFF))
+                        supern = IPv4Network((net_addr_int, prefixlen))
+                        lines.append(f"    network {str(supern)}")
+                    else:
+                        # fallback: scrivi le network collassate (più conservativo)
+                        for n in collapsed:
+                            lines.append(f"    network {str(n)}")
+
+            # IPv6: mantieni le reti così come sono (no supernetting automatico qui)
+            for n in ipv6_nets:
+                lines.append(f"    network {n}")
         except Exception:
+            # fallback semplice: stampa le stringhe originali dedupate
             nets_seen = set()
             for net in networks:
                 if net not in nets_seen:
                     lines.append(f"    network {net}")
                     nets_seen.add(net)
-    # append redistribute lines at the end (deduped, keep order)
-    if redistribute:
-        seen = set()
-        rd_lines = []
-        for proto in redistribute:
-            if proto in seen:
-                continue
-            seen.add(proto)
-            rd_lines.append(proto)
-        if rd_lines:
-            lines.append("")
-            for proto in rd_lines:
-                lines.append(f"    redistribute {proto}")
+    # NOTE: non aggiungiamo più automaticamente comandi `redistribute`.
+    # L'amministratore preferisce gestirli manualmente nel file `frr.conf`.
+    # Questo evita policy non desiderate inserite automaticamente.
 
     return "\n".join(lines) + "\n\n"
 
@@ -317,16 +317,19 @@ def mk_ospf_stanza(networks, redistribute=None):
             if ipv4_nets:
                 # collapse contiguous/prefix-overlapping networks first
                 collapsed = list(ipaddress.collapse_addresses(ipv4_nets))
-                # compute minimal covering supernet
-                min_addr = min(n.network_address for n in collapsed)
-                max_addr = max(n.broadcast_address for n in collapsed)
+                # compute minimal covering supernet (use original ipv4_nets for range)
+                min_addr = min(n.network_address for n in ipv4_nets)
+                max_addr = max(n.broadcast_address for n in ipv4_nets)
                 xor = int(min_addr) ^ int(max_addr)
                 if xor == 0:
-                    prefixlen = collapsed[0].prefixlen
+                    prefixlen = ipv4_nets[0].prefixlen
                 else:
                     prefixlen = 32 - xor.bit_length()
-                min_orig = min(n.prefixlen for n in collapsed)
-                if prefixlen < min_orig:
+                min_orig = min(n.prefixlen for n in ipv4_nets)
+
+                # Considera il supernet solo se non è troppo ampio (evitiamo /0..../7)
+                # e solo se effettivamente più ampio delle reti originali.
+                if prefixlen < min_orig and prefixlen >= 8:
                     # build supernet aligned to prefixlen
                     net_addr_int = int(min_addr) & (~((1 << (32 - prefixlen)) - 1))
                     supern = ipaddress.IPv4Network((net_addr_int, prefixlen))
@@ -344,6 +347,7 @@ def mk_ospf_stanza(networks, redistribute=None):
                     else:
                         lines.append(f"    network {supern} area 0.0.0.0")
                 else:
+                    # fallback al comportamento più conservativo: scrivi le reti collassate
                     for n in collapsed:
                         lines.append(f"    network {n} area 0.0.0.0")
             # append IPv6 networks without further aggregation
@@ -353,39 +357,14 @@ def mk_ospf_stanza(networks, redistribute=None):
             # fallback: print original strings
             for net in networks:
                 lines.append(f"    network {net} area 0.0.0.0")
-    # append redistribute directives at the end of the stanza (deduped, keep order)
-    if redistribute:
-        seen = set()
-        rd_lines = []
-        for proto in redistribute:
-            if proto in seen:
-                continue
-            seen.add(proto)
-            rd_lines.append(proto)
-        if rd_lines:
-            lines.append("")
-            for proto in rd_lines:
-                lines.append(f"    redistribute {proto}")
-
+    # Non aggiungiamo automaticamente `redistribute`.
     return "\n".join(lines) + "\n\n"
 
 def mk_rip_stanza(networks, redistribute=None):
     lines = ["router rip"]
     for net in networks:
         lines.append(f"    network {net}")
-    # append redistribute directives at stanza end (deduped, keep order)
-    if redistribute:
-        seen = set()
-        rd_lines = []
-        for proto in redistribute:
-            if proto in seen:
-                continue
-            seen.add(proto)
-            rd_lines.append(proto)
-        if rd_lines:
-            lines.append("")
-            for proto in rd_lines:
-                lines.append(f"    redistribute {proto}")
+    # Non aggiungiamo automaticamente `redistribute`.
     return "\n".join(lines) + "\n\n"
 
 # -------------------------
@@ -426,43 +405,14 @@ def crea_router_files(base_path, rname, data):
     # di usare un supernet più ampio se rilevano che conviene.
     aggregated_nets = collapse_interface_networks(iface_ips)
 
-    redistribute_into_bgp = [p for p in ("ospf", "rip") if p in data["protocols"]]
-    redistribute_from_bgp = [p for p in ("ospf", "rip") if p in data["protocols"]]
-    # se il router usa sia OSPF che BGP, distribuiamo BGP dentro OSPF
-    if "bgp" in data["protocols"] and "ospf" in data["protocols"]:
-        # assicuriamoci che 'bgp' appaia nella lista di redistribute per ospf
-        if "bgp" not in redistribute_from_bgp:
-            redistribute_from_bgp.append("bgp")
-
-    if iface_ips:
-        if "bgp" in data["protocols"]:
-            if "connected" not in redistribute_into_bgp:
-                redistribute_into_bgp.append("connected")
-        if "ospf" in data["protocols"]:
-            if "connected" not in redistribute_from_bgp:
-                redistribute_from_bgp.append("connected")
-        if "rip" in data["protocols"]:
-            if "connected" not in redistribute_from_bgp:
-                redistribute_from_bgp.append("connected")
-
-    def dedupe_list(lst):
-        seen = set()
-        out = []
-        for x in lst:
-            if x not in seen:
-                seen.add(x)
-                out.append(x)
-        return out
-
-    redistribute_into_bgp = dedupe_list(redistribute_into_bgp)
-    redistribute_from_bgp = dedupe_list(redistribute_from_bgp)
-
+    # Non creiamo più automaticamente direttive `redistribute`:
+    # l'amministratore preferisce aggiungerle manualmente nel file frr.conf.
     if "bgp" in data["protocols"]:
-        parts.append(mk_bgp_stanza(data.get("asn", ""), redistribute_into_bgp, networks=aggregated_nets))
+        parts.append(mk_bgp_stanza(data.get("asn", ""), networks=aggregated_nets))
     if "ospf" in data["protocols"]:
-        parts.append(mk_ospf_stanza(aggregated_nets, redistribute_from_bgp))
+        parts.append(mk_ospf_stanza(aggregated_nets))
     if "rip" in data["protocols"]:
-        parts.append(mk_rip_stanza(aggregated_nets, redistribute_from_bgp))
+        parts.append(mk_rip_stanza(aggregated_nets))
 
     with open(os.path.join(etc_frr, "frr.conf"), "w") as f:
         f.write("\n".join(parts))
