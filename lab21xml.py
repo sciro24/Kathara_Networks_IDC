@@ -781,6 +781,7 @@ def menu_post_creazione(base_path, routers):
         print('\n=== Menu post-creazione (scegli un\'opzione) ===')
         print('1) Imposta costo OSPF su una interfaccia di un router')
         print('2) Imposta preferenza su un router per dare priorità agli annunci da un neighbor')
+        print('3) Rigenera file XML del laboratorio (da file modificati)')
         print('0) Esci dal menu')
         choice = input('Seleziona (numero): ').strip()
         if choice == '0':
@@ -789,6 +790,16 @@ def menu_post_creazione(base_path, routers):
             assegna_costo_interfaccia(base_path, routers)
         elif choice == '2':
             preferenza_as50r1(base_path, routers)
+        elif choice == '3':
+            # rigenera XML leggendo lab.conf / startup / etc per ricostruire lo stato corrente
+            try:
+                xmlpath = rebuild_lab_metadata_and_export(base_path)
+                if xmlpath:
+                    print(f"✅ XML rigenerato: {xmlpath}")
+                else:
+                    print("❌ Rigenerazione XML non riuscita.")
+            except Exception as e:
+                print('Errore durante la rigenerazione XML:', e)
         else:
             print('Scelta non valida, riprova.')
 
@@ -963,6 +974,145 @@ def recreate_lab_from_data(lab_name, base, routers, hosts, wwws, lab_conf_text=N
 
     return lab_path
 
+
+def parse_lab_conf_for_nodes(lab_path):
+    """Parse `lab.conf` per ricavare nodi, mapping interfacce->LAN e immagini.
+    Ritorna: nodes dict with keys: name -> {'interfaces': {idx: lan}, 'image': image}
+    """
+    import re
+    nodes = {}
+    conf_path = os.path.join(lab_path, 'lab.conf')
+    if not os.path.exists(conf_path):
+        return nodes, None
+    lab_conf_text = None
+    try:
+        with open(conf_path, 'r', encoding='utf-8') as f:
+            lab_conf_text = f.read()
+    except Exception:
+        return nodes, None
+
+    lines = [L.strip() for L in lab_conf_text.splitlines() if L.strip()]
+    # pattern: name[index]=value
+    p = re.compile(r"^(?P<name>[^\[]+)\[(?P<idx>[^\]]+)\]=(?:\"(?P<qval>.*)\"|(?P<val>.*))$")
+    for L in lines:
+        m = p.match(L)
+        if not m:
+            continue
+        name = m.group('name')
+        idx = m.group('idx')
+        val = m.group('qval') if m.group('qval') is not None else m.group('val')
+        val = val.strip()
+        node = nodes.setdefault(name, {'interfaces': {}, 'image': ''})
+        if idx == 'image':
+            node['image'] = val.strip('"')
+        else:
+            # treat as interface index
+            try:
+                node['interfaces'][int(idx)] = val
+            except Exception:
+                node['interfaces'][idx] = val
+    return nodes, lab_conf_text
+
+
+def rebuild_lab_metadata_and_export(lab_path):
+    """Ricostruisce routers/hosts/www dal filesystem (lab.conf, startup, etc) e rigenera l'XML.
+    Restituisce il percorso del file XML creato o None in caso di errore.
+    """
+    lab_name = os.path.basename(os.path.normpath(lab_path))
+    nodes, lab_conf_text = parse_lab_conf_for_nodes(lab_path)
+    routers = {}
+    hosts = []
+    wwws = []
+
+    for name, meta in nodes.items():
+        image = meta.get('image','')
+        # collect interfaces: build list of dicts {name, lan, ip}
+        ifaces = []
+        for idx, lan in sorted(meta.get('interfaces', {}).items(), key=lambda x: int(x[0]) if isinstance(x[0], int) or x[0].isdigit() else 0):
+            eth = f"eth{idx}"
+            ifaces.append({'name': eth, 'lan': lan, 'ip': ''})
+
+        # read startup file for IPs and gateways
+        startup_path = os.path.join(lab_path, f"{name}.startup")
+        if os.path.exists(startup_path):
+            try:
+                with open(startup_path, 'r', encoding='utf-8') as f:
+                    for L in f:
+                        Ls = L.strip()
+                        if not Ls:
+                            continue
+                        # ip address add <ip> dev <iface>
+                        parts = Ls.split()
+                        if len(parts) >= 5 and parts[0] == 'ip' and parts[1] == 'address' and parts[2] == 'add':
+                            ip = parts[3]
+                            dev = parts[5] if len(parts) > 5 and parts[4] == 'dev' else None
+                            if dev:
+                                for it in ifaces:
+                                    if it['name'] == dev:
+                                        it['ip'] = ip
+                        # gateway extraction for hosts/www: 'ip route add default via <gw> dev eth0'
+                        if len(parts) >= 7 and parts[0] == 'ip' and parts[1] == 'route' and parts[2] == 'add' and parts[3] == 'default' and parts[4] == 'via':
+                            gw = parts[5]
+                            # attach gateway to a host/www entry later
+            except Exception:
+                pass
+
+        # if it's a FRR router image (heuristic)
+        if 'frr' in image.lower() or 'kathara/frr' in image.lower():
+            # detect protocols and ASN from etc/frr/frr.conf
+            frr_conf = os.path.join(lab_path, name, 'etc', 'frr', 'frr.conf')
+            protos = []
+            asn = ''
+            if os.path.exists(frr_conf):
+                try:
+                    with open(frr_conf, 'r', encoding='utf-8') as f:
+                        txt = f.read()
+                    if 'router bgp' in txt:
+                        protos.append('bgp')
+                        import re
+                        m = re.search(r'router bgp\s+(\d+)', txt)
+                        if m:
+                            asn = m.group(1)
+                    if 'router ospf' in txt:
+                        protos.append('ospf')
+                    if 'router rip' in txt:
+                        protos.append('rip')
+                except Exception:
+                    pass
+            routers[name] = {'protocols': protos, 'asn': asn, 'interfaces': ifaces}
+        else:
+            # decide host vs www by checking for www index file
+            www_index = os.path.join(lab_path, name, 'var', 'www', 'html', 'index.html')
+            # attempt to read IP/gateway from startup if present
+            ip_val = ''
+            gw_val = ''
+            startup_path = os.path.join(lab_path, f"{name}.startup")
+            if os.path.exists(startup_path):
+                try:
+                    with open(startup_path, 'r', encoding='utf-8') as f:
+                        for L in f:
+                            if 'ip address add' in L:
+                                parts = L.strip().split()
+                                if len(parts) >= 4:
+                                    ip_val = parts[3]
+                            if 'ip route add default via' in L:
+                                parts = L.strip().split()
+                                if len(parts) >= 6:
+                                    gw_val = parts[5]
+                except Exception:
+                    pass
+            if os.path.exists(www_index):
+                wwws.append({'name': name, 'ip': ip_val, 'gateway': gw_val, 'lan': meta.get('interfaces', {}).get(0, '')})
+            else:
+                hosts.append({'name': name, 'ip': ip_val, 'gateway': gw_val, 'lan': meta.get('interfaces', {}).get(0, '')})
+
+    try:
+        export_lab_to_xml(lab_name, lab_path, routers, hosts, wwws)
+        return os.path.join(lab_path, f"{lab_name}.xml")
+    except Exception as e:
+        print('Errore rigenerazione XML:', e)
+        return None
+
 # -------------------------
 # Main
 # -------------------------
@@ -971,11 +1121,19 @@ def main():
     parser = argparse.ArgumentParser(description='Generatore Kathará v11')
     parser.add_argument('--from-xml', help='Percorso file XML da importare per creare il lab')
     parser.add_argument('--from-json', help='Percorso file JSON da importare per creare il lab')
+    parser.add_argument('--regen-xml', help='Percorso della directory del lab per rigenerare il file XML')
     args, remaining = parser.parse_known_args()
 
     base = os.getcwd()
 
     # Se forniti via CLI, manteniamo il comportamento non-interattivo
+    if args.regen_xml:
+        out = rebuild_lab_metadata_and_export(args.regen_xml)
+        if out:
+            print(f"✅ XML rigenerato: {out}")
+        else:
+            print("❌ Rigenerazione XML fallita.")
+        return
     if args.from_xml or args.from_json:
         if args.from_xml:
             lab_name, routers, hosts, wwws, lab_conf_text = load_lab_from_xml(args.from_xml)
@@ -990,9 +1148,10 @@ def main():
     print("Scegli modalità:")
     print("  C - Crea nuovo laboratorio (interattivo)")
     print("  I - Importa da file (XML/JSON)")
+    print("  G - Rigenera XML di un lab esistente")
     print("  Q - Esci")
     while True:
-        mode = input_non_vuoto("Seleziona (C/I/Q): ").strip().lower()
+        mode = input_non_vuoto("Seleziona (C/I/G/Q): ").strip().lower()
         if not mode:
             continue
         if mode.startswith('q'):
@@ -1026,6 +1185,17 @@ def main():
             except Exception as e:
                 print('Errore importando il file:', e)
                 continue
+        if mode.startswith('g'):
+            target = input_non_vuoto('Percorso della directory del lab da cui rigenerare l\'XML: ')
+            if not os.path.isdir(target):
+                print(f"Directory non trovata: {target}")
+                continue
+            out = rebuild_lab_metadata_and_export(target)
+            if out:
+                print(f"✅ XML rigenerato: {out}")
+            else:
+                print("❌ Rigenerazione XML fallita.")
+            return
         print('Scelta non valida, riprova.')
 
     if os.path.exists(lab_path):
