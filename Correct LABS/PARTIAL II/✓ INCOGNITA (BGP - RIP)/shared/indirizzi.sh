@@ -1,0 +1,21 @@
+#!/bin/sh
+timeout 1s ping -c 1 3.1.0.3
+timeout 1s ping -c 1 3.2.0.3
+timeout 1s ping -c 1 1.1.0.1
+timeout 1s ping -c 1 10.0.0.2
+timeout 1s ping -c 1 2.0.0.1
+timeout 1s ping -c 1 20.0.0.13
+timeout 1s ping -c 1 20.0.0.22
+timeout 1s ping -c 1 3.1.0.2
+timeout 1s ping -c 1 3.0.0.2
+timeout 1s ping -c 1 3.0.0.1
+timeout 1s ping -c 1 20.0.0.14
+timeout 1s ping -c 1 2.0.0.2
+timeout 1s ping -c 1 20.0.0.21
+timeout 1s ping -c 1 1.1.0.3
+timeout 1s ping -c 1 1.2.0.3
+timeout 1s ping -c 1 3.2.0.4
+timeout 1s ping -c 1 1.2.0.2
+timeout 1s ping -c 1 1.3.0.2
+timeout 1s ping -c 1 10.0.0.1
+timeout 1s ping -c 1 1.3.0.1
