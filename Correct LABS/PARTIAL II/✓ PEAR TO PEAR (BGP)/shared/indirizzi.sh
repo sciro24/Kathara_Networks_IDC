@@ -1,0 +1,22 @@
+#!/bin/sh
+timeout 1s ping -c 1 50.20.200.20
+timeout 1s ping -c 1 50.2.20.20
+timeout 1s ping -c 1 100.20.0.20
+timeout 1s ping -c 1 50.2.88.88
+timeout 1s ping -c 1 193.204.0.88
+timeout 1s ping -c 1 50.20.200.200
+timeout 1s ping -c 1 100.200.0.200
+timeout 1s ping -c 1 50.10.200.200
+timeout 1s ping -c 1 50.1.2.2
+timeout 1s ping -c 1 100.2.0.2
+timeout 1s ping -c 1 50.2.88.2
+timeout 1s ping -c 1 50.2.20.2
+timeout 1s ping -c 1 100.10.0.10
+timeout 1s ping -c 1 50.1.10.10
+timeout 1s ping -c 1 50.10.200.10
+timeout 1s ping -c 1 50.10.100.10
+timeout 1s ping -c 1 100.100.0.100
+timeout 1s ping -c 1 50.10.100.100
+timeout 1s ping -c 1 100.1.0.1
+timeout 1s ping -c 1 50.1.2.1
+timeout 1s ping -c 1 50.1.10.1

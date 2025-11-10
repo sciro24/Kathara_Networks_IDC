@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lab name="✓ CANDY (BGP)">
+  <routers/>
+  <hosts>
+    <host name="as10r1" ip="110.0.0.1/24" gateway="" lan="A"/>
+    <host name="as20r1" ip="192.168.0.5/30" gateway="" lan="C"/>
+    <host name="as30r1" ip="130.0.0.1/24" gateway="" lan="D"/>
+    <host name="as40r1" ip="192.168.0.30/30" gateway="" lan="A"/>
+    <host name="as50r1" ip="192.168.0.14/30" gateway="" lan="H"/>
+    <host name="as60r1" ip="160.0.0.1/24" gateway="" lan="H"/>
+    <host name="as70r1" ip="192.168.0.21/30" gateway="" lan="F"/>
+    <host name="as80r1" ip="180.0.0.1/24" gateway="" lan="E"/>
+  </hosts>
+  <www/>
+  <lab_conf>as10r1[0]=A
+as10r1[1]=L
+
+as20r1[0]=C
+as20r1[1]=B
+
+as30r1[0]=D
+as30r1[1]=M
+
+as40r1[0]=A
+as40r1[1]=B
+as40r1[2]=F
+as40r1[3]=E
+
+as50r1[0]=H
+as50r1[1]=G
+as50r1[2]=C
+as50r1[3]=D
+
+as60r1[0]=H
+as60r1[1]=N
+
+as70r1[0]=F
+as70r1[1]=G
+
+as80r1[0]=E
+as80r1[1]=I</lab_conf>
+</lab>
