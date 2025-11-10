@@ -561,8 +561,8 @@ def auto_generate_bgp_neighbors(base_path, routers):
                 r2, ip2, asn2 = members[j]
                 if "bgp" not in routers[r1]["protocols"] or "bgp" not in routers[r2]["protocols"]:
                     continue
-                add_neighbor_if_missing(base_path, r1, ip2, routers[r2]['asn'], desc=f"Router AS{routers[r2]['asn']}{r2}")
-                add_neighbor_if_missing(base_path, r2, ip1, routers[r1]['asn'], desc=f"Router AS{routers[r1]['asn']}{r1}")
+                add_neighbor_if_missing(base_path, r1, ip2, routers[r2]['asn'], desc=f"Router {r2}")
+                add_neighbor_if_missing(base_path, r2, ip1, routers[r1]['asn'], desc=f"Router {r1}")
 
 def add_neighbor_if_missing(base_path, src_router, neigh_ip, neigh_asn, desc=None):
     fpath = os.path.join(base_path, src_router, "etc", "frr", "frr.conf")
@@ -841,7 +841,7 @@ def assegna_costo_interfaccia(base_path, routers):
         print('Interfaccia non selezionata. Annullato.')
         return
     costo = input_int(f'Inserisci il costo OSPF desiderato per {iface} (intero ≥ 1): ', 1)
-    stanza = f"interface {iface}\n    ip ospf cost {costo}\n"
+    stanza = f"interface {iface}\n    ospf cost {costo}\n"
     if append_frr_stanza(base_path, target, stanza):
         print(f"✅ Costo impostato su {target} {iface} = {costo} (append su frr.conf).")
 
