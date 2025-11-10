@@ -21,6 +21,18 @@ def input_non_vuoto(prompt):
         if v:
             return v
 
+def input_lan(prompt):
+    """Chiede il nome della LAN e valida che contenga solo lettere e numeri.
+    Ritorna il valore in maiuscolo. Esempi validi: 'A', 'A1', 'LAN2'.
+    Non permette punti o altri caratteri (es. indirizzi IP).
+    """
+    while True:
+        s = input_non_vuoto(prompt).strip().upper()
+        # accetta solo lettere e numeri, almeno 1 carattere
+        if s.isalnum():
+            return s
+        print("❌ Nome LAN non valido. Usa solo lettere e numeri (es. A o A1). Evita punti o indirizzi IP.")
+
 def input_int(prompt, min_val=0):
     while True:
         s = input(prompt).strip()
@@ -36,6 +48,10 @@ def valida_ip_cidr(prompt):
     """Valida e ritorna un indirizzo con CIDR (es. 10.0.0.1/24)."""
     while True:
         s = input(prompt).strip()
+        # richiediamo esplicitamente la presenza del prefisso '/'
+        if '/' not in s:
+            print("❌ Inserisci la maschera usando '/' alla fine (es. 192.168.1.1/24)")
+            continue
         try:
             ipaddress.ip_interface(s)
             return s
@@ -873,12 +889,12 @@ def preferenza_as50r1(base_path, routers):
 
 def menu_post_creazione(base_path, routers):
     while True:
-        print('\n=== Menu post-creazione (scegli un\'opzione) ===')
+        print('\n=== Menu post-creazione (scegli un\'opzione) ===\n')
         print('1) Imposta costo OSPF su una interfaccia di un router')
         print('2) Imposta preferenza su un router per dare priorità agli annunci da un neighbor')
         print('3) Rigenera file XML del laboratorio (da file modificati)')
         print('4) Genera comando ping per tutti gli indirizzi del lab (copia/incolla)')
-        print('0) Esci dal menu')
+        print('0) Esci dal menu\n')
         choice = input('Seleziona (numero): ').strip()
         if choice == '0':
             break
@@ -1252,13 +1268,13 @@ def main():
         return
 
     # Modalità interattiva: chiedi all'utente se creare o importare
-    print("=== Generatore Kathará ===")
-    print("Scegli modalità:")
+    print("=== Generatore Kathará ===\n")
+    print("Scegli modalità:\n")
     print("  C - Crea nuovo laboratorio (interattivo)")
     print("  I - Importa da file (XML/JSON)")
-    print("  G - Rigenera XML di un lab esistente")
-    print("  P - Genera comando ping per un lab esistente (copia/incolla)")
-    print("  Q - Esci")
+    print("  R - Rigenera XML di un lab esistente")
+    print("  G - Genera comando ping per un lab esistente (copia/incolla)")
+    print("  Q - Esci\n")
     while True:
         mode = input_non_vuoto("Seleziona (C/I/G/Q): ").strip().lower()
         if not mode:
@@ -1294,7 +1310,7 @@ def main():
             except Exception as e:
                 print('Errore importando il file:', e)
                 continue
-        if mode.startswith('g'):
+        if mode.startswith('r'):
             target = input_non_vuoto('Percorso della directory del lab da cui rigenerare l\'XML: ')
             if not os.path.isdir(target):
                 print(f"Directory non trovata: {target}")
@@ -1305,7 +1321,7 @@ def main():
             else:
                 print("❌ Rigenerazione XML fallita.")
             return
-        if mode.startswith('p'):
+        if mode.startswith('g'):
             target = input_non_vuoto('Percorso della directory del lab per generare il comando ping: ')
             if not os.path.isdir(target):
                 print(f"Directory non trovata: {target}")
@@ -1379,7 +1395,7 @@ def main():
         interfaces = []
         for idx in range(n_if):
             eth = f"eth{idx}"
-            lan = input_non_vuoto(f"  LAN associata a {eth} (es. A): ").upper()
+            lan = input_lan(f"  LAN associata a {eth} (es. A): ")
             ip_cidr = valida_ip_cidr(f"  IP per {eth} (es. 10.0.{i}.{idx}/24): ")
             interfaces.append({"name": eth, "lan": lan, "ip": ip_cidr})
             lab_conf_lines.append(f"{rname}[{idx}]={lan}")
@@ -1412,7 +1428,7 @@ def main():
         print(f"--- Configurazione host {hname} ---")
         ip = valida_ip_cidr(f"IP per {hname} (es. 192.168.10.{h}/24): ")
         gw = valida_ip_cidr(f"Gateway per {hname} (es. 192.168.10.1/24): ")
-        lan = input_non_vuoto("LAN associata (es. A): ").upper()
+        lan = input_lan("LAN associata (es. A): ")
         crea_host_file(lab_path, hname, ip, gw, lan)
         hosts.append({"name": hname, "ip": ip, "gateway": gw, "lan": lan})
         lab_conf_lines.append(f"{hname}[0]={lan}")
@@ -1436,7 +1452,7 @@ def main():
         print(f"--- Configurazione webserver {wname} ---")
         ip = valida_ip_cidr(f"IP per {wname} (es. 10.10.{w}.1/24): ")
         gw = valida_ip_cidr(f"Gateway per {wname} (es. 10.10.{w}.254/24): ")
-        lan = input_non_vuoto("LAN associata (es. Z): ").upper()
+        lan = input_lan("LAN associata (es. Z): ")
         crea_www_file(lab_path, wname, ip, gw, lan)
         wwws.append({"name": wname, "ip": ip, "gateway": gw, "lan": lan})
         lab_conf_lines.append(f"{wname}[0]={lan}")
