@@ -816,9 +816,9 @@ def generate_ping_oneliner(endpoints):
         "for rec in " + recs + "; do IFS='|' read -r ip name iface <<< \"$rec\"; "
         "out=$(ping -c 1 \"$ip\" 2>&1); "
         "loss=$(echo \"$out\" | awk -F',' '/packet loss/ {print $3}' | awk '{print $1}'); "
-        "if [ -z \"$loss\" ]; then echo -e \"❌ $ip ($name $iface): no reply\"; else "
+        "if [ -z \"$loss\" ]; then echo -e \"[!] $ip ($name $iface): no reply\"; else "
         "loss_num=$(echo \"$loss\" | tr -d '%'); "
-        "if [ \"$loss_num\" = \"0\" ]; then echo -e \"✅ $ip ($name $iface): $loss packet loss\"; else echo -e \"❌ $ip ($name $iface): $loss packet loss\"; fi; fi; done"
+        "if [ \"$loss_num\" = \"0\" ]; then echo -e \"[OK] $ip ($name $iface): $loss packet loss\"; else echo -e \"[!] $ip ($name $iface): $loss packet loss\"; fi; fi; done"
     )
     return cmd
 
