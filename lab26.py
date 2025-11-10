@@ -887,22 +887,136 @@ def preferenza_as50r1(base_path, routers):
     print(f"✅ Aggiunta preferenza su {src} per annunci provenienti da {neigh_ip} (ASN {neigh_asn}).")
     print(f"✅ Aggiunta preferenza su {src} per annunci provenienti da {neigh_ip} (ASN {neigh_asn}).")
 
+def ensure_neighbor_exists(fpath, neigh_ip):
+    """Se non esiste una riga 'neighbor <ip> remote-as' nel file fpath, chiede ASN e la crea."""
+    try:
+        with open(fpath, 'r') as f:
+            content = f.read()
+    except Exception:
+        return False
+    neigh_ip_stripped = neigh_ip.split('/')[0] if '/' in neigh_ip else neigh_ip
+    if f"neighbor {neigh_ip_stripped} remote-as" in content:
+        return True
+    # chiedi ASN all'utente
+    asn = input_non_vuoto(f"ASN del neighbor {neigh_ip_stripped} (necessario per creare il neighbor): ")
+    # inserisci il neighbor dentro il blocco router bgp
+    lines = [f"neighbor {neigh_ip_stripped} remote-as {asn}"]
+    insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=lines)
+    return True
+
+def policies_menu(base_path, routers):
+    """Sotto-menu per applicare policies BGP semplici ai router del lab."""
+    while True:
+        print('\n=== Policies BGP (scegli) ===\n')
+        print('1) Aggiungi prefix-list (deny <rete> e permit any) e collega al neighbor (in/out)')
+        print('2) Aggiungi route-map prefIn (set local-preference) e collega al neighbor (in)')
+        print('3) Aggiungi route-map localMedOut (set metric) e collega al neighbor (out)')
+        print('0) Torna indietro\n')
+        c = input('Seleziona (numero): ').strip()
+        if c == '0':
+            break
+        if c not in ('1','2','3'):
+            print('Scelta non valida.')
+            continue
+
+        src = select_router(routers, prompt='Seleziona il router su cui applicare la policy:')
+        if not src:
+            print('Annullato.')
+            continue
+        if 'bgp' not in routers.get(src, {}).get('protocols', []):
+            print(f"⚠️ Il router {src} non ha BGP abilitato.")
+            continue
+        fpath = os.path.join(base_path, src, 'etc', 'frr', 'frr.conf')
+        if not os.path.exists(fpath):
+            print(f"frr.conf non trovato per {src}: {fpath}")
+            continue
+
+        # common: chiedi IP neighbor
+        neigh_ip = valida_ip_senza_cidr('IP neighbor (es. 10.0.0.2): ')
+        neigh_ip = neigh_ip.split('/')[0] if '/' in neigh_ip else neigh_ip
+
+        # assicurati che esista il neighbor (remote-as). Se non esiste, chiediamo ASN e lo creiamo.
+        ensure_neighbor_exists(fpath, neigh_ip)
+
+        if c == '1':
+            # prefix-list deny <rete> + permit any; collega con neighbor <ip> prefix-list NAME in/out
+            direz = ''
+            while direz not in ('in','out'):
+                direz = input('Direzione (in/out): ').strip().lower()
+            rete = input_non_vuoto('Rete da DENY (es. 100.200.0.0/16): ').strip()
+            try:
+                net = ipaddress.ip_network(rete, strict=False)
+                rete_str = str(net)
+            except Exception:
+                print('Rete non valida.')
+                continue
+            pl_name = f"PL_{src}_{neigh_ip.replace('.','_')}_{direz}"
+            # append prefix-list definizione e poi inserisci la linea neighbor ... prefix-list ...
+            stanza = []
+            stanza.append(f"ip prefix-list {pl_name} deny {rete_str}")
+            stanza.append(f"ip prefix-list {pl_name} permit any")
+            # append global definitions
+            with open(fpath, 'a') as f:
+                f.write('\n')
+                for L in stanza:
+                    f.write(L + '\n')
+                f.write('\n')
+            # insert neighbor reference into router bgp block
+            insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=[f"neighbor {neigh_ip} prefix-list {pl_name} {direz}"])
+            print(f"✅ Aggiunta prefix-list {pl_name} su {src} e collegata al neighbor {neigh_ip} ({direz}).")
+
+        elif c == '2':
+            # route-map prefIn permit 10 set local-preference 110 + neighbor ... route-map prefIn in
+            lp = input_non_vuoto('Valore local-preference da impostare (es. 110): ').strip()
+            try:
+                lp_val = int(lp)
+            except Exception:
+                print('Valore non valido.')
+                continue
+            rm_name = f"PREF_IN_{neigh_ip.replace('.','_')}"
+            # append route-map definition
+            stanza = [f"route-map {rm_name} permit 10", f"    set local-preference {lp_val}", ""]
+            with open(fpath, 'a') as f:
+                f.write('\n')
+                for L in stanza:
+                    f.write(L + '\n')
+            # insert neighbor route-map line
+            insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=[f"neighbor {neigh_ip} route-map {rm_name} in"])
+            print(f"✅ Aggiunta route-map {rm_name} (local-pref {lp_val}) su {src} per neighbor {neigh_ip} (in).")
+
+        elif c == '3':
+            # route-map localMedOut permit 10 set metric 20 + neighbor ... route-map localMedOut out
+            metric = input_non_vuoto('Valore metric (MED) da impostare (es. 20): ').strip()
+            try:
+                m_val = int(metric)
+            except Exception:
+                print('Valore non valido.')
+                continue
+            rm_name = f"LOCALMED_OUT_{neigh_ip.replace('.','_')}"
+            stanza = [f"route-map {rm_name} permit 10", f"    set metric {m_val}", ""]
+            with open(fpath, 'a') as f:
+                f.write('\n')
+                for L in stanza:
+                    f.write(L + '\n')
+            insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=[f"neighbor {neigh_ip} route-map {rm_name} out"])
+            print(f"✅ Aggiunta route-map {rm_name} (set metric {m_val}) su {src} per neighbor {neigh_ip} (out).")
+
+
 def menu_post_creazione(base_path, routers):
     while True:
-        print('\n=== Menu post-creazione (scegli un\'opzione) ===\n')
+        print("\n=== Menu post-creazione (scegli un'opzione) ===\n")
         print('1) Imposta costo OSPF su una interfaccia di un router')
-        print('2) Imposta preferenza su un router per dare priorità agli annunci da un neighbor')
-        print('3) Rigenera file XML del laboratorio (da file modificati)')
-        print('4) Genera comando ping per tutti gli indirizzi del lab (copia/incolla)')
-        print('0) Esci dal menu\n')
+        print('2) Rigenera file XML del laboratorio (da file modificati)')
+        print('3) Genera comando ping per tutti gli indirizzi del lab (copia/incolla)')
+        print('4) Policies (prefix-list / route-map semplificate per BGP)')
+        print('0) Torna indietro / Esci dal menu\n')
         choice = input('Seleziona (numero): ').strip()
         if choice == '0':
+            # torna al menu precedente
             break
         if choice == '1':
             assegna_costo_interfaccia(base_path, routers)
         elif choice == '2':
-            preferenza_as50r1(base_path, routers)
-        elif choice == '3':
             # rigenera XML leggendo lab.conf / startup / etc per ricostruire lo stato corrente
             try:
                 xmlpath = rebuild_lab_metadata_and_export(base_path)
@@ -912,7 +1026,7 @@ def menu_post_creazione(base_path, routers):
                     print("❌ Rigenerazione XML non riuscita.")
             except Exception as e:
                 print('Errore durante la rigenerazione XML:', e)
-        elif choice == '4':
+        elif choice == '3':
             try:
                 ips = collect_lab_ips(base_path, routers)
                 if not ips:
@@ -924,6 +1038,8 @@ def menu_post_creazione(base_path, routers):
                     print('\n\n=== Fine comando ===\n')
             except Exception as e:
                 print('Errore generando il comando ping:', e)
+        elif choice == '4':
+            policies_menu(base_path, routers)
         else:
             print('Scelta non valida, riprova.')
 
@@ -1274,9 +1390,10 @@ def main():
     print("  I - Importa da file (XML/JSON)")
     print("  R - Rigenera XML di un lab esistente")
     print("  G - Genera comando ping per un lab esistente (copia/incolla)")
+    print("  P - Policies (applica prefix-list / route-map a router BGP esistenti)")
     print("  Q - Esci\n")
     while True:
-        mode = input_non_vuoto("Seleziona (C/I/G/Q): ").strip().lower()
+        mode = input_non_vuoto("Seleziona (C/I/R/G/P/Q): ").strip().lower()
         if not mode:
             continue
         if mode.startswith('q'):
@@ -1346,7 +1463,30 @@ def main():
             print('\n=== Comando ping generato (copia/incolla sulle macchine del lab) ===\n\n')
             print(cmd)
             print('\n\n=== Fine comando ===\n')
-            return
+            # torna al menu principale
+            continue
+        if mode.startswith('p'):
+            target = input_non_vuoto('Percorso della directory del lab su cui applicare policies: ')
+            if not os.path.isdir(target):
+                print(f"Directory non trovata: {target}")
+                continue
+            # try to load existing XML for the lab, otherwise regenerate it
+            xmlpath = os.path.join(target, os.path.basename(os.path.normpath(target)) + '.xml')
+            try:
+                if os.path.exists(xmlpath):
+                    lab_name, routers_meta, _, _, _ = load_lab_from_xml(xmlpath)
+                else:
+                    out = rebuild_lab_metadata_and_export(target)
+                    if not out:
+                        print('Impossibile generare metadata del lab.')
+                        continue
+                    lab_name, routers_meta, _, _, _ = load_lab_from_xml(out)
+                # apri il sotto-menu Policies
+                policies_menu(target, routers_meta)
+            except Exception as e:
+                print('Errore caricando il lab o aprendo policies:', e)
+            # torna al menu principale
+            continue
         print('Scelta non valida, riprova.')
 
     if os.path.exists(lab_path):
