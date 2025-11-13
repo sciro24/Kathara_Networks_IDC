@@ -5,7 +5,7 @@ The labs are used to practice network configuration, routing, and data center de
 
 🚀 The repository includes **labGenerator**, a tool designed to help automatically build a complete lab environment, streamlining the creation of all its components.
 
-[🛠️ See How It Works](#labgenerator)
+[🛠️ LAB GENERATOR](#labgenerator)
 
 ---
 
@@ -111,4 +111,5 @@ Each folder includes its own `lab.conf` topology file and startup configuration 
 
 ### 🏫 Author
 **Diego** – Computer Engineering student at *Roma Tre University*  
+**Born from an idea by Rainer Cabral Ilao**
 
