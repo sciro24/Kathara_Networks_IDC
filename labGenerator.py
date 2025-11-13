@@ -1619,6 +1619,8 @@ def main():
 
     lab_conf_lines = [LAB_CONF_HEADER.strip()]
     routers = {}
+    # traccia IP già assegnati durante la creazione interattiva per evitare duplicati
+    used_ips = set()
     # Collezioni per esportazione XML
     hosts = []
     wwws = []
@@ -1671,7 +1673,16 @@ def main():
         for idx in range(n_if):
             eth = f"eth{idx}"
             lan = input_lan(f"  LAN associata a {eth} (es. A): ")
-            ip_cidr = valida_ip_cidr(f"  IP per {eth} (es. 10.0.{i}.{idx}/24): ")
+            # richiedi IP e verifica che non sia già stato assegnato
+            while True:
+                ip_cidr = valida_ip_cidr(f"  IP per {eth} (es. 10.0.{i}.{idx}/24): ")
+                ip_only = ip_cidr.split('/')[0]
+                if ip_only in used_ips:
+                    print(f"❌ Errore: l'IP {ip_only} è già stato assegnato ad un'altra interfaccia. Scegli un altro IP.")
+                    continue
+                # non duplicato
+                used_ips.add(ip_only)
+                break
             interfaces.append({"name": eth, "lan": lan, "ip": ip_cidr})
             lab_conf_lines.append(f"{rname}[{idx}]={lan}")
         # fine ciclo interfacce: aggiungi la riga image e la linea vuota una sola volta
@@ -1705,7 +1716,15 @@ def main():
             break
         used_names.add(hname)
         print(f"--- Configurazione host {hname} ---")
-        ip = valida_ip_cidr(f"IP per {hname} (es. 192.168.10.{h}/24): ")
+        # richiedi IP controllando duplicati
+        while True:
+            ip = valida_ip_cidr(f"IP per {hname} (es. 192.168.10.{h}/24): ")
+            ip_only = ip.split('/')[0]
+            if ip_only in used_ips:
+                print(f"❌ Errore: l'IP {ip_only} è già stato assegnato. Scegli un altro IP.")
+                continue
+            used_ips.add(ip_only)
+            break
         gw = valida_ip_cidr(f"Gateway per {hname} (es. 192.168.10.1/24): ")
         lan = input_lan("LAN associata (es. A): ")
         crea_host_file(lab_path, hname, ip, gw, lan)
@@ -1729,7 +1748,15 @@ def main():
             break
         used_names.add(wname)
         print(f"--- Configurazione webserver {wname} ---")
-        ip = valida_ip_cidr(f"IP per {wname} (es. 10.10.{w}.1/24): ")
+        # richiedi IP controllando duplicati
+        while True:
+            ip = valida_ip_cidr(f"IP per {wname} (es. 10.10.{w}.1/24): ")
+            ip_only = ip.split('/')[0]
+            if ip_only in used_ips:
+                print(f"❌ Errore: l'IP {ip_only} è già stato assegnato. Scegli un altro IP.")
+                continue
+            used_ips.add(ip_only)
+            break
         gw = valida_ip_cidr(f"Gateway per {wname} (es. 10.10.{w}.254/24): ")
         lan = input_lan("LAN associata (es. Z): ")
         crea_www_file(lab_path, wname, ip, gw, lan)
