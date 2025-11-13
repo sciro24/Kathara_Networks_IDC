@@ -52,7 +52,19 @@ The exercises cover BGP setup in multi-AS environments, route filtering and pref
 
 ---
 
-## 🧩 Partial Exam 3 – 
+## 🧩 Partial Exam 3 – DNS
+
+This section includes the labs used to prepare for the **third midterm**, focused on **BGP**, **IGP** (OSPF/RIP), and **DNS** configuration.
+The exercises cover multi-protocol routing setup, inter-domain and intra-domain traffic management, and the deployment and troubleshooting of DNS services in a networked environment.
+
+
+**LABS:**
+- ⚙️
+
+
+
+
+
 
 
 
@@ -70,6 +82,7 @@ The exercises cover BGP setup in multi-AS environments, route filtering and pref
 
 
 
+---
 
 # **LabGenerator**
 
