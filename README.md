@@ -3,6 +3,10 @@
 This repository contains a collection of **Kathara** lab exercises developed for the *Internet and Data Centers* course at **Roma Tre University**.  
 The labs are used to practice network configuration, routing, and data center design topics covered during the course.
 
+🚀 The repository includes **labGenerator**, a tool designed to help automatically build a complete lab environment, streamlining the creation of all its components.
+
+[🛠️ See How It Works](#labgenerator)
+
 ---
 
 ## 📘 Partial Exam 1 – RIP/OSPF Network Configuration
@@ -84,7 +88,7 @@ The exercises cover multi-protocol routing setup, inter-domain and intra-domain 
 
 ---
 
-# **LabGenerator**
+# LabGenerator
 
 - **Scopo:** Generatore di laboratori Kathará/FRR che crea directory per router, host e server WWW, produce file `startup` e configurazioni FRR (`etc/frr/frr.conf`) automaticamente.
 
