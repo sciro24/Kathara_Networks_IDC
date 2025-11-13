@@ -241,142 +241,152 @@ def collapse_interface_networks(interface_ips):
     collapsed = list(ipaddress.collapse_addresses(networks))
     return [str(n) for n in collapsed]
 
+
+def choose_allowed_byte_aligned_supernet(interface_ips):
+    """
+    Sceglie un singolo supernet byte-aligned (solo /8 o /16) che copra
+    tutte le interfacce fornite in `interface_ips` (lista di stringhe IP/CIDR).
+
+    Regole:
+    - Preferisce /16 quando le interfacce condividono i primi due ottetti.
+    - Usa /8 solo se condividono solo il primo ottetto.
+    - Non restituisce /24: gli accorciamenti a /24 non sono consentiti.
+    - Se non è possibile trovare un /16 o /8 sensato, ritorna None.
+    """
+    nets = []
+    for ip_cidr in interface_ips:
+        try:
+            iface = ipaddress.ip_interface(ip_cidr)
+            nets.append(iface.network)
+        except Exception:
+            continue
+    if not nets:
+        return None
+    collapsed = list(ipaddress.collapse_addresses(nets))
+    ipv4_nets = [n for n in collapsed if isinstance(n, ipaddress.IPv4Network)]
+    if not ipv4_nets:
+        return None
+    min_addr = min(n.network_address for n in ipv4_nets)
+    max_addr = max(n.broadcast_address for n in ipv4_nets)
+    # Deterministic byte-by-byte logic to prefer /16 when sensible.
+    # Extract IPv4 addresses as tuples of octets
+    octets_list = []
+    for ip_cidr in interface_ips:
+        try:
+            iface = ipaddress.ip_interface(ip_cidr)
+            ip = iface.ip
+            if isinstance(ip, ipaddress.IPv4Address):
+                octs = tuple(int(x) for x in str(ip).split('.'))
+                octets_list.append(octs)
+        except Exception:
+            continue
+    if not octets_list:
+        return None
+
+    # check commonality
+    same_first2 = all(o[:2] == octets_list[0][:2] for o in octets_list)
+    same_first1 = all(o[0] == octets_list[0][0] for o in octets_list)
+
+    if same_first2:
+        # prefer /16 when possible
+        a, b = octets_list[0][0], octets_list[0][1]
+        return f"{a}.{b}.0.0/16"
+    if same_first1:
+        # /8
+        a = octets_list[0][0]
+        return f"{a}.0.0.0/8"
+
+    return None
+
+
+def group_by_first_octet(interface_ips):
+    """Raggruppa gli indirizzi per primo ottetto (es. 100.x.x.x -> key 100).
+    Restituisce dict: {first_octet_int: [ip_cidr_str, ...], ...}
+    """
+    groups = {}
+    for ip_cidr in interface_ips:
+        try:
+            iface = ipaddress.ip_interface(ip_cidr)
+            addr = iface.ip
+            if isinstance(addr, ipaddress.IPv4Address):
+                fo = int(str(addr).split('.')[0])
+                groups.setdefault(fo, []).append(ip_cidr)
+        except Exception:
+            continue
+    return groups
+
 # -------------------------
 # FRR stanza builders
 # -------------------------
 def mk_bgp_stanza(asn, redistribute=None, networks=None):
+    """
+    Costruisce la stanza BGP. Secondo le regole fornite dall'utente,
+    BGP deve annunciare tutte le network effettivamente collegate al
+    router senza accorciarle: manteniamo i prefissi originali.
+    """
     lines = [
         f"router bgp {asn}",
         "    no bgp ebgp-requires-policy",
         "    no bgp network import-check",
     ]
-    # networks handled below; redistribute directives will be appended
-    # at the end of the 'router bgp' block (after networks) to keep
-    # stanza visually grouped.
-    # I comandi debug BGP sono stati rimossi da qui
-    # compatta le network BGP: se più network possono essere rappresentate
-    # da un supernet comune, viene usato il supernet più specifico che
-    # copre l'intero insieme (es. reti 1.2.0.0/24 e 1.3.0.0/24 -> 1.0.0.0/8
-    # secondo la policy di copertura richiesta dall'utente)
     if networks:
-        try:
-            from ipaddress import ip_network, IPv4Network, IPv6Network
-            nets = [ip_network(n) for n in networks]
-            ipv4_nets = [n for n in nets if isinstance(n, IPv4Network)]
-            ipv6_nets = [n for n in nets if isinstance(n, IPv6Network)]
-
-            # Gestione IPv4: valutiamo se usare un byte-aligned supernet (/24,/16,/8)
-            # basandoci sulle reti originali (non solo sul risultato del collapse)
-            if ipv4_nets:
-                collapsed = list(ipaddress.collapse_addresses(ipv4_nets))
-                # Calcola range (min/max) sulle reti originali per permettere
-                # di scegliere un supernet più ampio anche quando il collapse
-                # ha prodotto un singolo network (es. due /24 adiacenti -> /23)
-                min_addr = min(n.network_address for n in ipv4_nets)
-                max_addr = max(n.broadcast_address for n in ipv4_nets)
-
-                # cerca candidati allineati /24, /16, /8 (preferiamo la più specifica tra queste)
-                chosen = None
-                for cand in (24, 16, 8):
-                    mask = ((0xFFFFFFFF << (32 - cand)) & 0xFFFFFFFF)
-                    aligned_int = int(min_addr) & mask
-                    cand_net = IPv4Network((aligned_int, cand))
-                    if int(cand_net.network_address) <= int(min_addr) and int(cand_net.broadcast_address) >= int(max_addr):
-                        chosen = cand_net
-                        break
-
-                # calcola il prefix minimo che copre l'intervallo
-                xor = int(min_addr) ^ int(max_addr)
-                if xor == 0:
-                    # tutte le reti sono identiche
-                    prefixlen = ipv4_nets[0].prefixlen
-                else:
-                    prefixlen = 32 - xor.bit_length()
-
-                min_orig = min(n.prefixlen for n in ipv4_nets)
-
-                # preferiamo un candidato byte-aligned se copre l'intervallo e
-                # non è troppo ampio (soglia minima /8)
-                if chosen is not None and chosen.prefixlen < min_orig and chosen.prefixlen >= 8:
-                    lines.append(f"    network {str(chosen)}")
-                else:
-                    # se il supernet calcolato è più ampio delle reti originali ed è >= /8, usalo
-                    if prefixlen < min_orig and prefixlen >= 8:
-                        net_addr_int = int(min_addr) & (((0xFFFFFFFF << (32 - prefixlen)) & 0xFFFFFFFF))
-                        supern = IPv4Network((net_addr_int, prefixlen))
-                        lines.append(f"    network {str(supern)}")
-                    else:
-                        # fallback: scrivi le network collassate (più conservativo)
-                        for n in collapsed:
-                            lines.append(f"    network {str(n)}")
-
-            # IPv6: mantieni le reti così come sono (no supernetting automatico qui)
-            for n in ipv6_nets:
-                lines.append(f"    network {n}")
-        except Exception:
-            # fallback semplice: stampa le stringhe originali dedupate
-            nets_seen = set()
-            for net in networks:
-                if net not in nets_seen:
-                    lines.append(f"    network {net}")
-                    nets_seen.add(net)
+        # scrivi le network così come sono (dedupando)
+        seen = set()
+        for net in networks:
+            try:
+                # normalizza la rete (es. 10.0.1.1/24 -> 10.0.1.0/24)
+                n = ipaddress.ip_network(net, strict=False)
+                s = str(n)
+            except Exception:
+                s = str(net)
+            if s not in seen:
+                lines.append(f"    network {s}")
+                seen.add(s)
     # NOTE: non aggiungiamo più automaticamente comandi `redistribute`.
     # L'amministratore preferisce gestirli manualmente nel file `frr.conf`.
     # Questo evita policy non desiderate inserite automaticamente.
 
     return "\n".join(lines) + "\n\n"
 
-def mk_ospf_stanza(networks, redistribute=None):
+def mk_ospf_stanza(networks, area=None, stub=False, redistribute=None):
+    """
+    Costruisce la stanza OSPF. Se viene passato `area`, le network saranno
+    annotate con `area <area>`. Se `stub` è True, aggiunge la linea
+    `area <area> stub` dopo le network.
+
+    Per accorciamenti, usiamo solo prefissi /8, /16 o /24 quando possibile.
+    """
     lines = ["router ospf"]
     if networks:
         try:
-            nets = [ipaddress.ip_network(n) for n in networks]
+            nets = [ipaddress.ip_network(n, strict=False) for n in networks]
             ipv4_nets = [n for n in nets if isinstance(n, ipaddress.IPv4Network)]
             ipv6_nets = [n for n in nets if isinstance(n, ipaddress.IPv6Network)]
             if ipv4_nets:
-                # collapse contiguous/prefix-overlapping networks first
+                # collapse first
                 collapsed = list(ipaddress.collapse_addresses(ipv4_nets))
-                # compute minimal covering supernet (use original ipv4_nets for range)
-                min_addr = min(n.network_address for n in ipv4_nets)
-                max_addr = max(n.broadcast_address for n in ipv4_nets)
-                xor = int(min_addr) ^ int(max_addr)
-                if xor == 0:
-                    prefixlen = ipv4_nets[0].prefixlen
+                # use deterministic byte-based chooser (prefers /24, then /16, then /8)
+                try:
+                    cand = choose_allowed_byte_aligned_supernet([str(n) for n in ipv4_nets])
+                except Exception:
+                    cand = None
+                if cand:
+                    area_str = f" area {area}" if area else ""
+                    lines.append(f"    network {cand}{area_str}")
                 else:
-                    prefixlen = 32 - xor.bit_length()
-                min_orig = min(n.prefixlen for n in ipv4_nets)
-
-                # Considera il supernet solo se non è troppo ampio (evitiamo /0..../7)
-                # e solo se effettivamente più ampio delle reti originali.
-                if prefixlen < min_orig and prefixlen >= 8:
-                    # build supernet aligned to prefixlen
-                    net_addr_int = int(min_addr) & (~((1 << (32 - prefixlen)) - 1))
-                    supern = ipaddress.IPv4Network((net_addr_int, prefixlen))
-                    # prefer byte-aligned (/24,/16,/8) if they still cover the range
-                    chosen = None
-                    for cand in (24, 16, 8):
-                        mask = (~((1 << (32 - cand)) - 1)) & ((1 << 32) - 1)
-                        aligned_int = int(min_addr) & mask
-                        cand_net = ipaddress.IPv4Network((aligned_int, cand))
-                        if int(cand_net.network_address) <= int(min_addr) and int(cand_net.broadcast_address) >= int(max_addr):
-                            chosen = cand_net
-                            break
-                    if chosen is not None:
-                        lines.append(f"    network {chosen} area 0.0.0.0")
-                    else:
-                        lines.append(f"    network {supern} area 0.0.0.0")
-                else:
-                    # fallback al comportamento più conservativo: scrivi le reti collassate
+                    # fallback: scrivi reti collassate con area
                     for n in collapsed:
-                        lines.append(f"    network {n} area 0.0.0.0")
-            # append IPv6 networks without further aggregation
+                        area_str = f" area {area}" if area else ""
+                        lines.append(f"    network {n}{area_str}")
             for n in ipv6_nets:
-                lines.append(f"    network {n} area 0.0.0.0")
+                area_str = f" area {area}" if area else ""
+                lines.append(f"    network {n}{area_str}")
         except Exception:
-            # fallback: print original strings
             for net in networks:
-                lines.append(f"    network {net} area 0.0.0.0")
-    # Non aggiungiamo automaticamente `redistribute`.
+                area_str = f" area {area}" if area else ""
+                lines.append(f"    network {net}{area_str}")
+    if stub and area:
+        lines.append(f"area {area} stub")
     return "\n".join(lines) + "\n\n"
 
 def mk_rip_stanza(networks, redistribute=None):
@@ -384,6 +394,31 @@ def mk_rip_stanza(networks, redistribute=None):
     for net in networks:
         lines.append(f"    network {net}")
     # Non aggiungiamo automaticamente `redistribute`.
+    return "\n".join(lines) + "\n\n"
+
+
+def format_ospf_multi_area(area_nets_map, stub_areas=None):
+    """
+    Costruisce un unico blocco 'router ospf' che contiene tutte le network
+    annotate con la relativa area, e le dichiarazioni 'area <id> stub'
+    dopo le network.
+
+    - area_nets_map: dict area_id -> list of network strings
+    - stub_areas: iterable of area_id da marcare come stub
+    """
+    if stub_areas is None:
+        stub_areas = set()
+    lines = ["router ospf"]
+    # ordiniamo le aree per stabilità (area 0.0.0.0 prima se presente)
+    def area_sort_key(a):
+        return (0 if a == '0.0.0.0' else 1, str(a))
+    for area in sorted(area_nets_map.keys(), key=area_sort_key):
+        nets = area_nets_map.get(area) or []
+        for n in nets:
+            lines.append(f"    network {n} area {area}")
+    # aggiungi dichiarazioni stub dopo le network
+    for area in sorted(stub_areas):
+        lines.append(f"    area {area} stub")
     return "\n".join(lines) + "\n\n"
 
 # -------------------------
@@ -419,19 +454,92 @@ def crea_router_files(base_path, rname, data):
         )
 
     iface_ips = [iface["ip"] for iface in data["interfaces"]]
-    # collapse minimale delle reti collegate; i singoli stanza-builder
-    # (mk_bgp_stanza, mk_ospf_stanza) possono ulteriormente scegliere
-    # di usare un supernet più ampio se rilevano che conviene.
+    # determiniamo le reti originali (una per interfaccia) per BGP
+    original_nets = []
+    for ip_cidr in iface_ips:
+        try:
+            n = ipaddress.ip_network(ip_cidr, strict=False)
+            original_nets.append(str(n))
+        except Exception:
+            continue
+
+    # collapsed networks (fallback per OSPF/BGP quando necessario)
     aggregated_nets = collapse_interface_networks(iface_ips)
 
-    # Non creiamo più automaticamente direttive `redistribute`:
-    # l'amministratore preferisce aggiungerle manualmente nel file frr.conf.
+    # Non creiamo più automaticamente direttive `redistribute`.
+    # BGP: annuncia tutte le network collegate senza accorciarle (mantieni prefissi originali)
     if "bgp" in data["protocols"]:
-        parts.append(mk_bgp_stanza(data.get("asn", ""), networks=aggregated_nets))
+        parts.append(mk_bgp_stanza(data.get("asn", ""), networks=original_nets))
+    # OSPF: usa area se fornita nel dato del router (campo 'ospf_area'), supporta stub
     if "ospf" in data["protocols"]:
-        parts.append(mk_ospf_stanza(aggregated_nets))
+        area_main = data.get('ospf_area')
+        stub_main = bool(data.get('ospf_area_stub'))
+        # Raggruppiamo le interfacce per "nuvole" (primo ottetto)
+        groups = group_by_first_octet(iface_ips)
+        if not groups:
+            # fallback: come prima
+            chosen = choose_allowed_byte_aligned_supernet(iface_ips)
+            nets_for_ospf = [chosen] if chosen else aggregated_nets
+            parts.append(mk_ospf_stanza(nets_for_ospf, area=area_main, stub=stub_main))
+        elif len(groups) == 1:
+            # unica nuvola: comportamento normale
+            chosen = choose_allowed_byte_aligned_supernet(iface_ips)
+            nets_for_ospf = [chosen] if chosen else aggregated_nets
+            parts.append(mk_ospf_stanza(nets_for_ospf, area=area_main, stub=stub_main))
+        else:
+            # multi-area: assegna l'area principale alla nuvola più grande
+            main_key = max(groups.keys(), key=lambda k: len(groups[k]))
+            # networks for main group
+            main_ips = groups[main_key]
+            chosen_main = choose_allowed_byte_aligned_supernet(main_ips)
+            nets_main = [chosen_main] if chosen_main else collapse_interface_networks(main_ips)
+            # build mapping area -> nets and set of stub areas
+            area_nets = {}
+            stub_areas = set()
+            # ensure main area has a valid id
+            main_area_id = area_main if area_main else '0.0.0.0'
+            area_nets.setdefault(main_area_id, []).extend(nets_main)
+            if stub_main:
+                stub_areas.add(main_area_id)
+            # gestisci le altre nuvole: area dedicata (stub) o richiesta interattiva
+            extra_areas = data.get('ospf_extra_areas', {}) if isinstance(data.get('ospf_extra_areas', {}), dict) else {}
+            for k in sorted(groups.keys()):
+                if k == main_key:
+                    continue
+                # verifica se è stata fornita un'area specifica per questo primo ottetto
+                if str(k) in extra_areas:
+                    a_info = extra_areas[str(k)]
+                    a_id = a_info.get('area') if isinstance(a_info, dict) else str(a_info)
+                    a_stub = bool(a_info.get('stub')) if isinstance(a_info, dict) else True
+                else:
+                    # chiedi interattivamente quale area usare; se vuoto -> auto genera e marca stub
+                    try:
+                        ans = input(f"Router {rname} OSPF: area per interfacce con primo ottetto {k} (vuoto->auto stub 1.1.1.1): ").strip()
+                    except Exception:
+                        ans = ''
+                    if ans:
+                        a_id = ans
+                        s = input("Marcare quest'area come stub? (s/N): ").strip().lower()
+                        a_stub = s.startswith('s')
+                    else:
+                        # area auto-generata: assegna la stub predefinita '1.1.1.1'
+                        a_id = '1.1.1.1'
+                        a_stub = True
+                group_ips = groups[k]
+                chosen_g = choose_allowed_byte_aligned_supernet(group_ips)
+                nets_g = [chosen_g] if chosen_g else collapse_interface_networks(group_ips)
+                area_nets.setdefault(a_id, []).extend(nets_g)
+                if a_stub:
+                    stub_areas.add(a_id)
+            # finally append a single multi-area ospf block
+            parts.append(format_ospf_multi_area(area_nets, stub_areas))
+    # RIP: accorcia le reti alla network byte-aligned (/8,/16,/24) che copra tutte le LAN collegate
     if "rip" in data["protocols"]:
-        parts.append(mk_rip_stanza(aggregated_nets))
+        rip_net = choose_allowed_byte_aligned_supernet(iface_ips)
+        if rip_net:
+            parts.append(mk_rip_stanza([rip_net]))
+        else:
+            parts.append(mk_rip_stanza(aggregated_nets))
 
     with open(os.path.join(etc_frr, "frr.conf"), "w") as f:
         f.write("\n".join(parts))
@@ -1506,6 +1614,9 @@ def main():
     n_host = input_int("Numero di host/PC: ", 0)
     n_www = input_int("Numero di server WWW: ", 0)
 
+    # stato OSPF: ricorda la prima area OSPF incontrata (se presente)
+    first_ospf_area = None
+
     lab_conf_lines = [LAB_CONF_HEADER.strip()]
     routers = {}
     # Collezioni per esportazione XML
@@ -1531,6 +1642,30 @@ def main():
         asn = ""
         if "bgp" in protocols:
             asn = input_non_vuoto("Numero AS BGP: ")
+
+        # OSPF: chiedi area per il primo router OSPF; per i successivi proponi la stessa area
+        ospf_area = None
+        ospf_stub = False
+        if "ospf" in protocols:
+            if first_ospf_area is None:
+                ans = input_non_vuoto("Questo è il primo router OSPF. Appartiene alla backbone (area 0.0.0.0)? (s/N): ").strip().lower()
+                if ans.startswith('s'):
+                    ospf_area = '0.0.0.0'
+                    first_ospf_area = ospf_area
+                else:
+                    a = input_non_vuoto("Inserisci l'area OSPF di questo router (es. 1.1.1.1): ")
+                    ospf_area = a
+                    ospf_stub = True
+                    first_ospf_area = ospf_area
+            else:
+                ans = input(f"Area OSPF per {rname} (vuoto -> default {first_ospf_area}): ").strip()
+                if ans:
+                    ospf_area = ans
+                    s = input_non_vuoto("Marcare quest'area come stub? (s/N): ").strip().lower()
+                    ospf_stub = s.startswith('s')
+                else:
+                    ospf_area = first_ospf_area
+
         n_if = input_int("Numero interfacce: ", 1)
         interfaces = []
         for idx in range(n_if):
@@ -1543,7 +1678,11 @@ def main():
         lab_conf_lines.append(f'{rname}[image]="kathara/frr"')
         lab_conf_lines.append("")  # blank line
         # salva i dati del router e genera i file (frr.conf, startup, ecc.)
-        routers[rname] = {"protocols": protocols, "asn": asn, "interfaces": interfaces}
+        rdata = {"protocols": protocols, "asn": asn, "interfaces": interfaces}
+        if "ospf" in protocols:
+            rdata['ospf_area'] = ospf_area
+            rdata['ospf_area_stub'] = ospf_stub
+        routers[rname] = rdata
         crea_router_files(lab_path, rname, routers[rname])
 
     
