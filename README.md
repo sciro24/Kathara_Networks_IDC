@@ -58,6 +58,24 @@ The exercises cover BGP setup in multi-AS environments, route filtering and pref
 
 
 
+
+
+
+
+
+# **LabGenerator**
+
+- **Scopo:** Generatore di laboratori Kathará/FRR che crea directory per router, host e server WWW, produce file `startup` e configurazioni FRR (`etc/frr/frr.conf`) automaticamente.
+
+**Funzionamento veloce**
+- Modalità interattiva: esegui `python3 labGenerator.py` e segui i prompt per creare router, host e WWW.
+
+
+**Output principali**
+- Per ogni router creato: directory `/<lab>/<router>/etc/frr/` contenente `frr.conf` e `vtysh.conf`, oltre a `<router>.startup` nella root del lab.
+- Per host/www: file `<name>.startup` e, per WWW, `var/www/html/index.html`.
+
+
 ---
 
 ### 🧠 Notes
@@ -68,3 +86,4 @@ Each folder includes its own `lab.conf` topology file and startup configuration 
 
 ### 🏫 Author
 **Diego** – Computer Engineering student at *Roma Tre University*  
+
