@@ -587,6 +587,121 @@ def crea_www_file(base_path, name, ip_cidr, gateway_cidr, lan):
     except Exception:
         pass
 
+
+def crea_dns_host(base_path, name, ip_cidr, gateway_cidr, lan, forwarders=None, zones=None, root_type=None):
+    """
+    Crea la struttura di un Host DNS (BIND9) nella directory del lab.
+
+    Struttura creata:
+    <base_path>/<name>/etc/bind/
+        db.root
+        named.conf
+        named.conf.options
+        (facoltativo) db.<name>.<zone>
+
+    Lo startup file conterrà `systemctl start named`.
+    - forwarders: lista di indirizzi IP (stringhe) da inserire in named.conf.options
+    - zones: dict zone_name -> dict of records (basic A records), e.g. {"example.local": {"host": "10.0.0.10"}}
+    """
+    bind_dir = os.path.join(base_path, name, 'etc', 'bind')
+    os.makedirs(bind_dir, exist_ok=True)
+    # --- named.conf.options ---
+    # Two variants: minimal or with recursion + dnssec disabled
+    opts_lines = [
+        'options {',
+        '    directory "/var/cache/bind";',
+    ]
+    # If forwarders are provided, include recursion allow and disable DNSSEC validation
+    if forwarders:
+        opts_lines.append('    allow-recursion { any; };')
+        opts_lines.append('    dnssec-validation no;')
+    opts_lines.append('};')
+    opts_content = "\n".join(opts_lines) + "\n"
+    with open(os.path.join(bind_dir, 'named.conf.options'), 'w') as f:
+        f.write(opts_content)
+
+    # --- db.root ---
+    # Decide se il server è root/master o hint: root_type == 'master' -> full SOA, 'hint' -> hint format
+    ip_root = ip_cidr.split('/')[0] if ip_cidr else '127.0.0.1'
+    import datetime
+    serial = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d') + '01'
+    if root_type == 'master':
+        db_root_lines = [
+            '$TTL 60000',
+            '@ IN SOA ROOT-SERVER. root.ROOT-SERVER. (',
+            f'    {serial} ; serial',
+            '    28800 ;  refresh',
+            '    14400 ; retry',
+            '    3600000 ; expire',
+            '    0 ; negative cache ttl',
+            ')',
+            '',
+            '@                  IN   NS   ROOT-SERVER.',
+            f'ROOT-SERVER.       IN    A   {ip_root}',
+            '',
+        ]
+    else:
+        # default/hint format
+        db_root_lines = [
+            '.      IN   NS   ROOT-SERVER.',
+            f'ROOT-SERVER.   IN    A   {ip_root}',
+            '',
+        ]
+    with open(os.path.join(bind_dir, 'db.root'), 'w') as f:
+        f.write('\n'.join(db_root_lines))
+
+    # --- named.conf ---
+    # include options (absolute path) and declare zone for '.' as master or hint
+    named_lines = [
+        'include "/etc/bind/named.conf.options";',
+        '',
+    ]
+    zone_type = 'hint' if root_type != 'master' else 'master'
+    named_lines.append('zone "." {')
+    named_lines.append(f'    type {zone_type};')
+    named_lines.append('    file "/etc/bind/db.root";')
+    named_lines.append('};')
+    named_lines.append('')
+    with open(os.path.join(bind_dir, 'named.conf'), 'w') as f:
+        f.write('\n'.join(named_lines))
+
+    # create zone files if provided (other authoritative zones)
+    if zones:
+        for zname, records in zones.items():
+            # skip root zone if present in zones (we already created db.root)
+            if zname == '.':
+                continue
+            zone_file_path = os.path.join(bind_dir, f"db.{name}.{zname.replace('.', '_')}")
+            serial_zone = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d') + '01'
+            zone_lines = [
+                f"$TTL 86400",
+                f"@ IN SOA ns.{zname}. admin.{zname}. (",
+                f"    {serial_zone} ; serial",
+                f"    3600 ; refresh",
+                f"    1800 ; retry",
+                f"    604800 ; expire",
+                f"    86400 ; minimum",
+                f")",
+                f"@ IN NS ns.{zname}.",
+                f"ns IN A {ip_root}",
+            ]
+            if isinstance(records, dict):
+                for h, ip in records.items():
+                    zone_lines.append(f"{h} IN A {ip}")
+            with open(zone_file_path, 'w') as f:
+                f.write('\n'.join(zone_lines) + '\n')
+
+    # startup: configure IP and start named
+    gateway = gateway_cidr.split('/')[0] if '/' in gateway_cidr else gateway_cidr
+    startup = f"ip address add {ip_cidr} dev eth0\nip route add default via {gateway} dev eth0\nsystemctl start named\n"
+    startup_path = os.path.join(base_path, f"{name}.startup")
+    with open(startup_path, 'w') as f:
+        f.write(startup)
+    try:
+        os.chmod(startup_path, 0o755)
+    except Exception:
+        pass
+
 # -------------------------
 # BGP relations: manual menu
 # -------------------------
@@ -1165,31 +1280,72 @@ def export_lab_to_xml(lab_name, lab_path, routers, hosts, wwws):
         routers_el = ET.SubElement(root, 'routers')
         for rname, rdata in routers.items():
             r_el = ET.SubElement(routers_el, 'router', attrib={'name': rname})
+            # protocols
             prot_el = ET.SubElement(r_el, 'protocols')
             for p in rdata.get('protocols', []):
                 p_el = ET.SubElement(prot_el, 'protocol')
                 p_el.text = str(p)
+            # asn
             asn = rdata.get('asn', '')
             if asn:
                 asn_el = ET.SubElement(r_el, 'asn')
                 asn_el.text = str(asn)
+            # OSPF info (optional)
+            if rdata.get('ospf_area'):
+                oa = ET.SubElement(r_el, 'ospf_area')
+                oa.text = str(rdata.get('ospf_area'))
+                if rdata.get('ospf_area_stub'):
+                    oas = ET.SubElement(r_el, 'ospf_area_stub')
+                    oas.text = '1'
+            # ospf_extra_areas (dict) if present
+            if isinstance(rdata.get('ospf_extra_areas'), dict):
+                extra_el = ET.SubElement(r_el, 'ospf_extra_areas')
+                for k, v in rdata.get('ospf_extra_areas', {}).items():
+                    e = ET.SubElement(extra_el, 'area', attrib={'first_octet': str(k)})
+                    if isinstance(v, dict):
+                        if v.get('area'):
+                            ET.SubElement(e, 'id').text = str(v.get('area'))
+                        if v.get('stub'):
+                            ET.SubElement(e, 'stub').text = '1'
+                    else:
+                        ET.SubElement(e, 'id').text = str(v)
+            # interfaces
             if 'interfaces' in rdata:
                 ifs_el = ET.SubElement(r_el, 'interfaces')
                 for iface in rdata['interfaces']:
-                    attrib = {
-                        'name': iface.get('name', ''),
-                        'lan': iface.get('lan', ''),
-                        'ip': iface.get('ip', '')
-                    }
-                    ET.SubElement(ifs_el, 'interface', attrib=attrib)
+                    i_el = ET.SubElement(ifs_el, 'interface')
+                    i_el.set('name', iface.get('name', ''))
+                    i_el.set('lan', iface.get('lan', ''))
+                    i_el.set('ip', iface.get('ip', ''))
 
         hosts_el = ET.SubElement(root, 'hosts')
         for h in hosts:
-            ET.SubElement(hosts_el, 'host', attrib={'name': h.get('name', ''), 'ip': h.get('ip', ''), 'gateway': h.get('gateway', ''), 'lan': h.get('lan', '')})
+            h_attrib = {'name': h.get('name',''), 'ip': h.get('ip',''), 'gateway': h.get('gateway',''), 'lan': h.get('lan','')}
+            if h.get('image'):
+                h_attrib['image'] = h.get('image')
+            h_el = ET.SubElement(hosts_el, 'host', attrib=h_attrib)
+            # dns info
+            if h.get('dns'):
+                ET.SubElement(h_el, 'dns').text = '1'
+                if isinstance(h.get('forwarders'), list):
+                    fw_el = ET.SubElement(h_el, 'forwarders')
+                    for fwd in h.get('forwarders'):
+                        ET.SubElement(fw_el, 'forwarder').text = str(fwd)
+                if isinstance(h.get('zones'), dict):
+                    zones_el = ET.SubElement(h_el, 'zones')
+                    for zname, records in h.get('zones').items():
+                        z_el = ET.SubElement(zones_el, 'zone', attrib={'name': zname})
+                        if isinstance(records, dict):
+                            for rname, rip in records.items():
+                                rec = ET.SubElement(z_el, 'record', attrib={'name': rname})
+                                rec.text = str(rip)
 
         www_el = ET.SubElement(root, 'www')
         for w in wwws:
-            ET.SubElement(www_el, 'server', attrib={'name': w.get('name', ''), 'ip': w.get('ip', ''), 'gateway': w.get('gateway', ''), 'lan': w.get('lan', '')})
+            w_attrib = {'name': w.get('name',''), 'ip': w.get('ip',''), 'gateway': w.get('gateway',''), 'lan': w.get('lan','')}
+            if w.get('image'):
+                w_attrib['image'] = w.get('image')
+            ET.SubElement(www_el, 'server', attrib=w_attrib)
 
         # include lab.conf content se presente
         try:
@@ -1227,6 +1383,26 @@ def load_lab_from_xml(path):
         protocols = [p.text for p in r.findall('./protocols/protocol') if p.text]
         asn_el = r.find('asn')
         asn = asn_el.text if asn_el is not None else ''
+        ospf_area = None
+        ospf_stub = False
+        oa_el = r.find('ospf_area')
+        if oa_el is not None and oa_el.text:
+            ospf_area = oa_el.text
+        oas_el = r.find('ospf_area_stub')
+        if oas_el is not None:
+            ospf_stub = True
+        # ospf_extra_areas
+        extra_areas = {}
+        for ea in r.findall('./ospf_extra_areas/area'):
+            key = ea.attrib.get('first_octet')
+            aid = ea.findtext('id')
+            stub = ea.findtext('stub') is not None
+            if key:
+                if aid:
+                    extra_areas[str(key)] = {'area': aid, 'stub': stub}
+                else:
+                    extra_areas[str(key)] = {'area': None, 'stub': stub}
+
         interfaces = []
         for it in r.findall('./interfaces/interface'):
             interfaces.append({
@@ -1234,15 +1410,56 @@ def load_lab_from_xml(path):
                 'lan': it.attrib.get('lan',''),
                 'ip': it.attrib.get('ip','')
             })
-        routers[rname] = {'protocols': protocols, 'asn': asn, 'interfaces': interfaces}
+        rd = {'protocols': protocols, 'asn': asn, 'interfaces': interfaces}
+        if ospf_area:
+            rd['ospf_area'] = ospf_area
+            rd['ospf_area_stub'] = ospf_stub
+        if extra_areas:
+            rd['ospf_extra_areas'] = extra_areas
+        routers[rname] = rd
 
     hosts = []
     for h in root.findall('./hosts/host'):
-        hosts.append({'name': h.attrib.get('name',''), 'ip': h.attrib.get('ip',''), 'gateway': h.attrib.get('gateway',''), 'lan': h.attrib.get('lan','')})
+        name = h.attrib.get('name','')
+        ip = h.attrib.get('ip','')
+        gateway = h.attrib.get('gateway','')
+        lan = h.attrib.get('lan','')
+        image = h.attrib.get('image','')
+        host_rec = {'name': name, 'ip': ip, 'gateway': gateway, 'lan': lan}
+        if image:
+            host_rec['image'] = image
+        # dns
+        if h.find('dns') is not None:
+            host_rec['dns'] = True
+            fwd_el = h.find('forwarders')
+            if fwd_el is not None:
+                host_rec['forwarders'] = [f.text for f in fwd_el.findall('forwarder') if f.text]
+            zones_el = h.find('zones')
+            if zones_el is not None:
+                zones = {}
+                for z in zones_el.findall('zone'):
+                    zname = z.attrib.get('name')
+                    records = {}
+                    for rec in z.findall('record'):
+                        rname = rec.attrib.get('name')
+                        rip = rec.text
+                        if rname and rip:
+                            records[rname] = rip
+                    zones[zname] = records
+                host_rec['zones'] = zones
+        hosts.append(host_rec)
 
     wwws = []
     for w in root.findall('./www/server'):
-        wwws.append({'name': w.attrib.get('name',''), 'ip': w.attrib.get('ip',''), 'gateway': w.attrib.get('gateway',''), 'lan': w.attrib.get('lan','')})
+        name = w.attrib.get('name','')
+        ip = w.attrib.get('ip','')
+        gateway = w.attrib.get('gateway','')
+        lan = w.attrib.get('lan','')
+        image = w.attrib.get('image','')
+        wrec = {'name': name, 'ip': ip, 'gateway': gateway, 'lan': lan}
+        if image:
+            wrec['image'] = image
+        wwws.append(wrec)
 
     lab_conf_text = None
     lc = root.find('lab_conf')
@@ -1265,7 +1482,14 @@ def load_lab_from_json(path):
         protocols = r.get('protocols', [])
         asn = r.get('asn', '')
         interfaces = r.get('interfaces', [])
-        routers[rname] = {'protocols': protocols, 'asn': asn, 'interfaces': interfaces}
+        rd = {'protocols': protocols, 'asn': asn, 'interfaces': interfaces}
+        # optional ospf fields
+        if r.get('ospf_area'):
+            rd['ospf_area'] = r.get('ospf_area')
+            rd['ospf_area_stub'] = bool(r.get('ospf_area_stub'))
+        if r.get('ospf_extra_areas'):
+            rd['ospf_extra_areas'] = r.get('ospf_extra_areas')
+        routers[rname] = rd
     hosts = data.get('hosts', []) or []
     wwws = data.get('www', []) or data.get('wwws', []) or []
     lab_conf_text = data.get('lab_conf') or None
@@ -1292,7 +1516,14 @@ def recreate_lab_from_data(lab_name, base, routers, hosts, wwws, lab_conf_text=N
     # crea hosts
     for h in hosts:
         try:
-            crea_host_file(lab_path, h.get('name'), h.get('ip'), h.get('gateway'), h.get('lan'))
+            # supporta host DNS: se il dict contiene 'dns': True o 'type' == 'dns'
+            if (isinstance(h, dict) and (h.get('dns') or str(h.get('type','')).lower() == 'dns')):
+                # forwarders e zones sono opzionali
+                fwd = h.get('forwarders') if isinstance(h.get('forwarders'), list) else None
+                zones = h.get('zones') if isinstance(h.get('zones'), dict) else None
+                crea_dns_host(lab_path, h.get('name'), h.get('ip'), h.get('gateway'), h.get('lan'), forwarders=fwd, zones=zones)
+            else:
+                crea_host_file(lab_path, h.get('name'), h.get('ip'), h.get('gateway'), h.get('lan'))
         except Exception:
             pass
 
@@ -1613,6 +1844,7 @@ def main():
     n_router = input_int("Numero di router: ", 0)
     n_host = input_int("Numero di host/PC: ", 0)
     n_www = input_int("Numero di server WWW: ", 0)
+    n_dns = input_int("Numero di host DNS: ", 0)
 
     # stato OSPF: ricorda la prima area OSPF incontrata (se presente)
     first_ospf_area = None
@@ -1763,6 +1995,71 @@ def main():
         wwws.append({"name": wname, "ip": ip, "gateway": gw, "lan": lan})
         lab_conf_lines.append(f"{wname}[0]={lan}")
         lab_conf_lines.append(f'{wname}[image]="kathara/base"')
+        lab_conf_lines.append("")
+
+    # DNS hosts
+    for d in range(1, n_dns + 1):
+        default_dname = f"dns{d}"
+        while True:
+            dname_in = input(f"\nNome host DNS (default {default_dname}): ").strip()
+            dname = dname_in if dname_in else default_dname
+            if ' ' in dname:
+                print("Il nome non può contenere spazi.")
+                continue
+            if dname in used_names:
+                print(f"Nome '{dname}' già usato. Scegli un altro.")
+                continue
+            break
+        used_names.add(dname)
+        print(f"--- Configurazione host DNS {dname} ---")
+        # richiedi IP controllando duplicati
+        while True:
+            ip = valida_ip_cidr(f"IP per {dname} (es. 10.20.{d}.10/24): ")
+            ip_only = ip.split('/')[0]
+            if ip_only in used_ips:
+                print(f"❌ Errore: l'IP {ip_only} è già stato assegnato. Scegli un altro IP.")
+                continue
+            used_ips.add(ip_only)
+            break
+        gw = valida_ip_cidr(f"Gateway per {dname} (es. 10.20.{d}.1/24): ")
+        lan = input_lan("LAN associata (es. A): ")
+
+        # Forwarders: rimosso prompt interattivo (puoi ancora passarli via JSON se necessario)
+        forwarders = None
+
+        # Zones (opzionali)
+        zones = None
+        add_z = input("Aggiungere zone authoritative su questo host? (s/N): ").strip().lower()
+        if add_z.startswith('s'):
+            zones = {}
+            nz = input_int("Numero di zone da creare su questo host: ", 0)
+            for zi in range(1, nz+1):
+                zname = input_non_vuoto(f"  Nome zona {zi} (es. example.local): ")
+                records = {}
+                nr = input_int(f"  Quanti record A nella zona '{zname}' (es. host->IP): ", 0)
+                for r in range(1, nr+1):
+                    h = input_non_vuoto(f"    Nome host (es. www) per record {r}: ")
+                    rip = valida_ip_cidr(f"    IP per {h} (es. 10.20.{d}.{10+r}/24): ")
+                    records[h] = rip.split('/')[0]
+                zones[zname] = records
+
+        # chiedi se questo host deve essere root/master/hint
+        root_choice = input("Tipo server per '.' ? (m=master / h=hint / n=nessuno) [h]: ").strip().lower()
+        if root_choice == 'm':
+            root_type = 'master'
+        elif root_choice == 'n':
+            root_type = None
+        else:
+            root_type = 'hint'
+
+        # crea files per DNS host
+        try:
+            crea_dns_host(lab_path, dname, ip, gw, lan, forwarders=forwarders, zones=zones, root_type=root_type)
+        except Exception:
+            pass
+        hosts.append({"name": dname, "ip": ip, "gateway": gw, "lan": lan, "dns": True, "forwarders": forwarders, "zones": zones})
+        lab_conf_lines.append(f"{dname}[0]={lan}")
+        lab_conf_lines.append(f'{dname}[image]="kathara/base"')
         lab_conf_lines.append("")
 
     # write lab.conf
