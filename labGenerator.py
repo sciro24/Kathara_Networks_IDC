@@ -588,7 +588,7 @@ def crea_www_file(base_path, name, ip_cidr, gateway_cidr, lan):
         pass
 
 
-def crea_dns_host(base_path, name, ip_cidr, gateway_cidr, lan, forwarders=None, zones=None, root_type=None):
+def crea_dns_host(base_path, name, ip_cidr, gateway_cidr, lan, forwarders=None, zones=None, root_type=None, root_server_ip=None, allow_recursion=None, dnssec_validation=False):
     """
     Crea la struttura di un Host DNS (BIND9) nella directory del lab.
 
@@ -611,9 +611,16 @@ def crea_dns_host(base_path, name, ip_cidr, gateway_cidr, lan, forwarders=None, 
         'options {',
         '    directory "/var/cache/bind";',
     ]
-    # If forwarders are provided, include recursion allow and disable DNSSEC validation
+    # If forwarders are provided, include forwarders block
     if forwarders:
-        opts_lines.append('    allow-recursion { any; };')
+        # forwarders is expected to be a list of IPs
+        fw = ' '.join(str(x) + ';' for x in forwarders)
+        opts_lines.append(f'    forwarders {{ {' '.join(forwarders)}; }};')
+    # allow_recursion can be 'any' or '0/0' or similar string to be placed verbatim
+    if allow_recursion:
+        opts_lines.append(f'    allow-recursion {{ {allow_recursion}; }};')
+    # dnssec_validation -> add dnssec-validation no;
+    if dnssec_validation:
         opts_lines.append('    dnssec-validation no;')
     opts_lines.append('};')
     opts_content = "\n".join(opts_lines) + "\n"
@@ -622,7 +629,17 @@ def crea_dns_host(base_path, name, ip_cidr, gateway_cidr, lan, forwarders=None, 
 
     # --- db.root ---
     # Decide se il server è root/master o hint: root_type == 'master' -> full SOA, 'hint' -> hint format
-    ip_root = ip_cidr.split('/')[0] if ip_cidr else '127.0.0.1'
+    host_ip = ip_cidr.split('/')[0] if ip_cidr else '127.0.0.1'
+    # Determine which IP to write inside db.root:
+    # - if this server is declared master -> use its own IP
+    # - if this server is hint and a root_server_ip is provided -> use that IP
+    # - otherwise fallback to the host IP
+    if root_type == 'master':
+        ip_root = host_ip
+    elif root_type == 'hint' and root_server_ip:
+        ip_root = root_server_ip
+    else:
+        ip_root = host_ip
     import datetime
     serial = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d') + '01'
     if root_type == 'master':
@@ -662,6 +679,20 @@ def crea_dns_host(base_path, name, ip_cidr, gateway_cidr, lan, forwarders=None, 
     named_lines.append('    file "/etc/bind/db.root";')
     named_lines.append('};')
     named_lines.append('')
+
+    # add authoritative zones to named.conf if any
+    if zones:
+        for zname in zones.keys():
+            if zname == '.':
+                continue
+            rev = '.'.join(zname.split('.')[::-1])
+            fname = f"/etc/bind/db.{rev}"
+            named_lines.append(f'zone "{zname}" {{')
+            named_lines.append('    type master;')
+            named_lines.append(f'    file "{fname}";')
+            named_lines.append('};')
+            named_lines.append('')
+
     with open(os.path.join(bind_dir, 'named.conf'), 'w') as f:
         f.write('\n'.join(named_lines))
 
@@ -671,23 +702,60 @@ def crea_dns_host(base_path, name, ip_cidr, gateway_cidr, lan, forwarders=None, 
             # skip root zone if present in zones (we already created db.root)
             if zname == '.':
                 continue
-            zone_file_path = os.path.join(bind_dir, f"db.{name}.{zname.replace('.', '_')}")
+            # create filename like db.it.roma3 for zone roma3.it
+            rev = '.'.join(zname.split('.')[::-1])
+            zone_file_path = os.path.join(bind_dir, f"db.{rev}")
             serial_zone = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d') + '01'
+            # If this host is authoritative for the domain, create SOA as requested
             zone_lines = [
-                f"$TTL 86400",
-                f"@ IN SOA ns.{zname}. admin.{zname}. (",
+                '$TTL 60000',
+                f"@ IN SOA dns.{zname}. root.dns.{zname}. (",
                 f"    {serial_zone} ; serial",
-                f"    3600 ; refresh",
-                f"    1800 ; retry",
-                f"    604800 ; expire",
-                f"    86400 ; minimum",
-                f")",
-                f"@ IN NS ns.{zname}.",
-                f"ns IN A {ip_root}",
+                '    28800 ;  refresh',
+                '    14400 ; retry',
+                '    3600000 ; expire',
+                '    0 ; negative cache ttl',
+                ')',
+                '',
+                '@\t\t\t\tIN\t\tNS\t\tdns.' + f"{zname}.",
+                '',
             ]
+            # add records if provided (A/NS/CNAME/delegation etc.)
             if isinstance(records, dict):
-                for h, ip in records.items():
-                    zone_lines.append(f"{h} IN A {ip}")
+                for h, ipval in records.items():
+                    # support simple A record (string) or complex record (dict)
+                    if isinstance(ipval, str):
+                        zone_lines.append(f"{h} IN A {ipval}")
+                        continue
+                    if isinstance(ipval, dict):
+                        rtype = str(ipval.get('type', 'A')).upper()
+                        if rtype == 'A':
+                            ipaddr = ipval.get('ip')
+                            if ipaddr:
+                                zone_lines.append(f"{h} IN A {ipaddr}")
+                        elif rtype == 'NS':
+                            ns_host = ipval.get('ns') or ipval.get('host')
+                            if ns_host:
+                                zone_lines.append(f"{h} IN NS {ns_host}")
+                                glue_ip = ipval.get('glue') or ipval.get('ip') or ipval.get('glue_ip')
+                                if glue_ip:
+                                    zone_lines.append(f"{ns_host} IN A {glue_ip}")
+                        elif rtype == 'DELEGATION':
+                            child_zone = ipval.get('zone') or h
+                            ns_host = ipval.get('ns')
+                            ns_ip = ipval.get('ns_ip') or ipval.get('glue_ip') or ipval.get('ip')
+                            if child_zone and ns_host:
+                                zone_lines.append(f"{child_zone} IN NS {ns_host}")
+                                if ns_ip:
+                                    zone_lines.append(f"{ns_host} IN A {ns_ip}")
+                        elif rtype == 'CNAME':
+                            target = ipval.get('target')
+                            if target:
+                                zone_lines.append(f"{h} IN CNAME {target}")
+                        else:
+                            ipaddr = ipval.get('ip')
+                            if ipaddr:
+                                zone_lines.append(f"{h} IN A {ipaddr}")
             with open(zone_file_path, 'w') as f:
                 f.write('\n'.join(zone_lines) + '\n')
 
@@ -1327,6 +1395,9 @@ def export_lab_to_xml(lab_name, lab_path, routers, hosts, wwws):
             # dns info
             if h.get('dns'):
                 ET.SubElement(h_el, 'dns').text = '1'
+                # export root_type if present
+                if h.get('root_type'):
+                    ET.SubElement(h_el, 'root_type').text = str(h.get('root_type'))
                 if isinstance(h.get('forwarders'), list):
                     fw_el = ET.SubElement(h_el, 'forwarders')
                     for fwd in h.get('forwarders'):
@@ -1338,7 +1409,14 @@ def export_lab_to_xml(lab_name, lab_path, routers, hosts, wwws):
                         if isinstance(records, dict):
                             for rname, rip in records.items():
                                 rec = ET.SubElement(z_el, 'record', attrib={'name': rname})
-                                rec.text = str(rip)
+                                # support both simple A-record (string) and complex record (dict)
+                                if isinstance(rip, dict):
+                                    # write child elements for complex record
+                                    for k, v in rip.items():
+                                        c = ET.SubElement(rec, k)
+                                        c.text = str(v)
+                                else:
+                                    rec.text = str(rip)
 
         www_el = ET.SubElement(root, 'www')
         for w in wwws:
@@ -1431,6 +1509,9 @@ def load_lab_from_xml(path):
         # dns
         if h.find('dns') is not None:
             host_rec['dns'] = True
+            rt = h.find('root_type')
+            if rt is not None and rt.text:
+                host_rec['root_type'] = rt.text
             fwd_el = h.find('forwarders')
             if fwd_el is not None:
                 host_rec['forwarders'] = [f.text for f in fwd_el.findall('forwarder') if f.text]
@@ -1442,9 +1523,17 @@ def load_lab_from_xml(path):
                     records = {}
                     for rec in z.findall('record'):
                         rname = rec.attrib.get('name')
-                        rip = rec.text
-                        if rname and rip:
-                            records[rname] = rip
+                        # record may be simple text or complex children
+                        if len(list(rec)) == 0:
+                            rip = rec.text
+                            if rname and rip:
+                                records[rname] = rip
+                        else:
+                            # complex record: parse children into dict
+                            crec = {}
+                            for c in rec:
+                                crec[c.tag] = c.text
+                            records[rname] = crec
                     zones[zname] = records
                 host_rec['zones'] = zones
         hosts.append(host_rec)
@@ -1514,6 +1603,18 @@ def recreate_lab_from_data(lab_name, base, routers, hosts, wwws, lab_conf_text=N
         crea_router_files(lab_path, rname, rdata)
 
     # crea hosts
+    # prima pass: individua l'eventuale server DNS master per usare il suo IP come riferimento
+    dns_root_ip = None
+    for h in hosts:
+        try:
+            if isinstance(h, dict) and h.get('dns') and str(h.get('root_type','')).lower() == 'master':
+                # estrai IP senza CIDR
+                ip = h.get('ip') or ''
+                dns_root_ip = ip.split('/')[0] if '/' in ip else ip
+                break
+        except Exception:
+            continue
+
     for h in hosts:
         try:
             # supporta host DNS: se il dict contiene 'dns': True o 'type' == 'dns'
@@ -1521,7 +1622,11 @@ def recreate_lab_from_data(lab_name, base, routers, hosts, wwws, lab_conf_text=N
                 # forwarders e zones sono opzionali
                 fwd = h.get('forwarders') if isinstance(h.get('forwarders'), list) else None
                 zones = h.get('zones') if isinstance(h.get('zones'), dict) else None
-                crea_dns_host(lab_path, h.get('name'), h.get('ip'), h.get('gateway'), h.get('lan'), forwarders=fwd, zones=zones)
+                rt = h.get('root_type') if isinstance(h.get('root_type'), str) else None
+                if rt and str(rt).lower() != 'master' and dns_root_ip:
+                    crea_dns_host(lab_path, h.get('name'), h.get('ip'), h.get('gateway'), h.get('lan'), forwarders=fwd, zones=zones, root_type=rt, root_server_ip=dns_root_ip)
+                else:
+                    crea_dns_host(lab_path, h.get('name'), h.get('ip'), h.get('gateway'), h.get('lan'), forwarders=fwd, zones=zones, root_type=rt)
             else:
                 crea_host_file(lab_path, h.get('name'), h.get('ip'), h.get('gateway'), h.get('lan'))
         except Exception:
@@ -1998,6 +2103,7 @@ def main():
         lab_conf_lines.append("")
 
     # DNS hosts
+    dns_root_ip = None
     for d in range(1, n_dns + 1):
         default_dname = f"dns{d}"
         while True:
@@ -2052,12 +2158,19 @@ def main():
         else:
             root_type = 'hint'
 
-        # crea files per DNS host
+        # se questo host è master, registrane l'IP per i successivi hint
+        if root_type == 'master':
+            dns_root_ip = ip.split('/')[0]
+
+        # crea files per DNS host; se è hint e abbiamo il root registrato, passalo
         try:
-            crea_dns_host(lab_path, dname, ip, gw, lan, forwarders=forwarders, zones=zones, root_type=root_type)
+            if root_type != 'master' and dns_root_ip:
+                crea_dns_host(lab_path, dname, ip, gw, lan, forwarders=forwarders, zones=zones, root_type=root_type, root_server_ip=dns_root_ip)
+            else:
+                crea_dns_host(lab_path, dname, ip, gw, lan, forwarders=forwarders, zones=zones, root_type=root_type)
         except Exception:
             pass
-        hosts.append({"name": dname, "ip": ip, "gateway": gw, "lan": lan, "dns": True, "forwarders": forwarders, "zones": zones})
+        hosts.append({"name": dname, "ip": ip, "gateway": gw, "lan": lan, "dns": True, "forwarders": forwarders, "zones": zones, 'root_type': root_type})
         lab_conf_lines.append(f"{dname}[0]={lan}")
         lab_conf_lines.append(f'{dname}[image]="kathara/base"')
         lab_conf_lines.append("")
