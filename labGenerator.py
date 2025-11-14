@@ -1295,12 +1295,19 @@ def policies_menu(base_path, routers):
 
 def menu_post_creazione(base_path, routers):
     while True:
-        print("\n=== Menu post-creazione (scegli un'opzione) ===\n")
+        print("\n\n-------------- Menu post-creazione --------------\n")
+        print("Scegli una opzione:\n")
         print('1) Imposta costo OSPF su una interfaccia di un router')
         print('2) Rigenera file XML del laboratorio (da file modificati)')
         print('3) Genera comando ping per tutti gli indirizzi del lab (copia/incolla)')
         print('4) Policies (prefix-list / route-map semplificate per BGP)')
-        print('0) Torna indietro / Esci dal menu\n')
+        print('0) Termina Programma\n')
+        # footer: mostrato in basso per identificazione dell'autore
+        print('\n--------------------------------------------------')
+        print('----- Programma realizzato da Diego Scirocco -----')
+        print('--------------------------------------------------\n')
+
+
         choice = input('Seleziona (numero): ').strip()
         if choice == '0':
             # torna al menu precedente
@@ -1828,14 +1835,16 @@ def main():
         return
 
     # Modalità interattiva: chiedi all'utente se creare o importare
-    print("=== Generatore Kathará ===\n")
-    print("Scegli modalità:\n")
+    print("\n\n----- Benvenuto nel Katharà Lab Generator 2025 -----\n")
+    print("Scegli una modalità:\n")
     print("  C - Crea nuovo laboratorio (interattivo)")
     print("  I - Importa da file (XML/JSON)")
     print("  R - Rigenera XML di un lab esistente")
-    print("  G - Genera comando ping per un lab esistente (copia/incolla)")
-    print("  P - Policies (applica prefix-list / route-map a router BGP esistenti)")
+    print("  G - Genera comando PING per un lab esistente (copia/incolla)")
+    print("  P - Applica Policies BGP")
     print("  Q - Esci\n")
+    print("------------------------------------------------------\n")
+
     while True:
         mode = input_non_vuoto("Seleziona (C/I/R/G/P/Q): ").strip().lower()
         if not mode:
@@ -2189,7 +2198,6 @@ def main():
         print('Attenzione: esportazione XML fallita:', e)
 
     print(f"\n✅ Lab '{lab_name}' creato in: {lab_path}")
-    print("Nota: sono stati generati neighbor BGP automatici per router che condividono la stessa LAN.")
     # Menu in italiano per implementare richieste aggiuntive
     try:
         menu_post_creazione(lab_path, routers)
@@ -2197,5 +2205,24 @@ def main():
         print('Errore durante il menu post-creazione:', e)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        # Graceful shutdown on Ctrl+C: clear terminal and exit without traceback
+        try:
+            print()  # ensure newline after ^C
+        except Exception:
+            pass
+        try:
+            if os.name == 'nt':
+                os.system('cls')
+            else:
+                os.system('clear')
+        except Exception:
+            pass
+        try:
+            sys.exit(0)
+        except Exception:
+            # fallback
+            os._exit(0)
 
