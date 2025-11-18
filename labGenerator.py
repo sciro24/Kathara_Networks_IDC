@@ -614,11 +614,11 @@ def crea_dns_host(base_path, name, ip_cidr, gateway_cidr, lan, forwarders=None, 
     # If forwarders are provided, include forwarders block
     if forwarders:
         # forwarders is expected to be a list of IPs
-        fw = ' '.join(str(x) + ';' for x in forwarders)
-        opts_lines.append(f'    forwarders {{ {' '.join(forwarders)}; }};')
+        fw_items = ' '.join(f"{x};" for x in forwarders)
+        opts_lines.append('    forwarders { ' + fw_items + ' };')
     # allow_recursion can be 'any' or '0/0' or similar string to be placed verbatim
     if allow_recursion:
-        opts_lines.append(f'    allow-recursion {{ {allow_recursion}; }};')
+        opts_lines.append('    allow-recursion { ' + str(allow_recursion) + '; };')
     # dnssec_validation -> add dnssec-validation no;
     if dnssec_validation:
         opts_lines.append('    dnssec-validation no;')
@@ -1408,6 +1408,11 @@ def export_lab_to_xml(lab_name, lab_path, routers, hosts, wwws):
                                         c.text = str(v)
                                 else:
                                     rec.text = str(rip)
+                # export allow_recursion and dnssec_validation if present
+                if h.get('allow_recursion'):
+                    ET.SubElement(h_el, 'allow_recursion').text = str(h.get('allow_recursion'))
+                if h.get('dnssec_validation'):
+                    ET.SubElement(h_el, 'dnssec_validation').text = '1'
 
         www_el = ET.SubElement(root, 'www')
         for w in wwws:
@@ -1527,6 +1532,13 @@ def load_lab_from_xml(path):
                             records[rname] = crec
                     zones[zname] = records
                 host_rec['zones'] = zones
+            # optional: allow_recursion and dnssec_validation flags
+            ar_el = h.find('allow_recursion')
+            if ar_el is not None and ar_el.text:
+                host_rec['allow_recursion'] = ar_el.text.strip()
+            dv_el = h.find('dnssec_validation')
+            if dv_el is not None and (dv_el.text and dv_el.text.strip() in ('1','true','yes')):
+                host_rec['dnssec_validation'] = True
         hosts.append(host_rec)
 
     wwws = []
@@ -1614,10 +1626,13 @@ def recreate_lab_from_data(lab_name, base, routers, hosts, wwws, lab_conf_text=N
                 fwd = h.get('forwarders') if isinstance(h.get('forwarders'), list) else None
                 zones = h.get('zones') if isinstance(h.get('zones'), dict) else None
                 rt = h.get('root_type') if isinstance(h.get('root_type'), str) else None
+                # read optional flags from host dict (allow_recursion may be a string like 'any')
+                allow_rec = h.get('allow_recursion') if isinstance(h.get('allow_recursion'), str) else None
+                dnssec_val = bool(h.get('dnssec_validation'))
                 if rt and str(rt).lower() != 'master' and dns_root_ip:
-                    crea_dns_host(lab_path, h.get('name'), h.get('ip'), h.get('gateway'), h.get('lan'), forwarders=fwd, zones=zones, root_type=rt, root_server_ip=dns_root_ip)
+                    crea_dns_host(lab_path, h.get('name'), h.get('ip'), h.get('gateway'), h.get('lan'), forwarders=fwd, zones=zones, root_type=rt, root_server_ip=dns_root_ip, allow_recursion=allow_rec, dnssec_validation=dnssec_val)
                 else:
-                    crea_dns_host(lab_path, h.get('name'), h.get('ip'), h.get('gateway'), h.get('lan'), forwarders=fwd, zones=zones, root_type=rt)
+                    crea_dns_host(lab_path, h.get('name'), h.get('ip'), h.get('gateway'), h.get('lan'), forwarders=fwd, zones=zones, root_type=rt, allow_recursion=allow_rec, dnssec_validation=dnssec_val)
             else:
                 crea_host_file(lab_path, h.get('name'), h.get('ip'), h.get('gateway'), h.get('lan'))
         except Exception:
@@ -2123,23 +2138,55 @@ def main():
         gw = valida_ip_cidr(f"Gateway per {dname} (es. 10.20.{d}.1/24): ")
         lan = input_lan("LAN associata (es. A): ")
 
-        # Forwarders: rimosso prompt interattivo (puoi ancora passarli via JSON se necessario)
+        # Forwarders: opzionale (lascia vuoto per nessun forwarder)
         forwarders = None
+        fwd_input = input("Forwarders (IP separati da spazio, invio per nessuno): ").strip()
+        if fwd_input:
+            forwarders = [x.strip() for x in fwd_input.split() if x.strip()]
 
-        # Zones (opzionali)
+        # Zones (opzionali) - GUIDA: qui puoi creare zone authoritative su questo host.
+        # Esempio: zone come 'example.local' contenenti record A, NS, CNAME o delegazioni.
+        # Per ogni record scegli il tipo (A/NS/CNAME/DELEGATION) e compila i campi richiesti.
         zones = None
         add_z = input("Aggiungere zone authoritative su questo host? (s/N): ").strip().lower()
         if add_z.startswith('s'):
             zones = {}
             nz = input_int("Numero di zone da creare su questo host: ", 0)
             for zi in range(1, nz+1):
-                zname = input_non_vuoto(f"  Nome zona {zi} (es. example.local): ")
+                zname = input_non_vuoto(f"  Nome zona {zi} (nome Host DNS in questione): ")
+                print(f"  Creazione zona '{zname}': inserisci i record desiderati.")
                 records = {}
-                nr = input_int(f"  Quanti record A nella zona '{zname}' (es. host->IP): ", 0)
+                nr = input_int(f"  Quanti record vuoi aggiungere nella zona '{zname}'? ", 0)
                 for r in range(1, nr+1):
-                    h = input_non_vuoto(f"    Nome host (es. www) per record {r}: ")
-                    rip = valida_ip_cidr(f"    IP per {h} (es. 10.20.{d}.{10+r}/24): ")
-                    records[h] = rip.split('/')[0]
+                    print(f"    Record {r} (formati supportati: A, NS, CNAME, DELEGATION)")
+                    rtype = input_non_vuoto("      Tipo record (A/NS/CNAME/DELEGATION): ").strip().upper()
+                    if rtype == 'A':
+                        h = input_non_vuoto("      Nome host (es. dns.it): ")
+                        rip = valida_ip_cidr("      IP (es. 10.20.1.10/24): ")
+                        records[h] = rip.split('/')[0]
+                    elif rtype == 'NS':
+                        h = input_non_vuoto("      Nome delegato (es. @ per la zona): ")
+                        nsname = input_non_vuoto("      Nome del nameserver (es. dns.example.local.): ")
+                        glue = input("      Glue IP per il nameserver (opzionale, invio per saltare): ").strip()
+                        rec = {'type': 'NS', 'ns': nsname}
+                        if glue:
+                            rec['glue'] = glue
+                        records[h] = rec
+                    elif rtype == 'CNAME':
+                        h = input_non_vuoto("      Nome alias (es. ftp): ")
+                        target = input_non_vuoto("      Target canonical name (es. www): ")
+                        records[h] = {'type': 'CNAME', 'target': target}
+                    elif rtype == 'DELEGATION':
+                        child = input_non_vuoto("      Nome sottodominio da delegare (es. sub): ")
+                        nsname = input_non_vuoto("      Nameserver per la delega (es. ns.sub.example.local.): ")
+                        ns_ip = input("      Glue IP per il nameserver (opzionale): ").strip()
+                        rec = {'type': 'DELEGATION', 'zone': child, 'ns': nsname}
+                        if ns_ip:
+                            rec['ns_ip'] = ns_ip
+                        # store delegation using the child label as key
+                        records[child] = rec
+                    else:
+                        print("      Tipo record non riconosciuto, salto questo record.")
                 zones[zname] = records
 
         # chiedi se questo host deve essere root/master/hint
@@ -2155,15 +2202,25 @@ def main():
         if root_type == 'master':
             dns_root_ip = ip.split('/')[0]
 
+        # Opzioni named.conf.options: allow-recursion e dnssec-validation
+        allow_recursion = None
+        ar = input("Vuoi aggiungere la riga 'allow-recursion { any; };' in named.conf.options? (s/N): ").strip().lower()
+        if ar.startswith('s'):
+            allow_recursion = 'any'
+        dnssec_validation = False
+        dv = input("Vuoi disabilitare DNSSEC validation scrivendo 'dnssec-validation no;'? (s/N): ").strip().lower()
+        if dv.startswith('s'):
+            dnssec_validation = True
+
         # crea files per DNS host; se è hint e abbiamo il root registrato, passalo
         try:
             if root_type != 'master' and dns_root_ip:
-                crea_dns_host(lab_path, dname, ip, gw, lan, forwarders=forwarders, zones=zones, root_type=root_type, root_server_ip=dns_root_ip)
+                crea_dns_host(lab_path, dname, ip, gw, lan, forwarders=forwarders, zones=zones, root_type=root_type, root_server_ip=dns_root_ip, allow_recursion=allow_recursion, dnssec_validation=dnssec_validation)
             else:
-                crea_dns_host(lab_path, dname, ip, gw, lan, forwarders=forwarders, zones=zones, root_type=root_type)
+                crea_dns_host(lab_path, dname, ip, gw, lan, forwarders=forwarders, zones=zones, root_type=root_type, allow_recursion=allow_recursion, dnssec_validation=dnssec_validation)
         except Exception:
             pass
-        hosts.append({"name": dname, "ip": ip, "gateway": gw, "lan": lan, "dns": True, "forwarders": forwarders, "zones": zones, 'root_type': root_type})
+        hosts.append({"name": dname, "ip": ip, "gateway": gw, "lan": lan, "dns": True, "forwarders": forwarders, "zones": zones, 'root_type': root_type, 'allow_recursion': allow_recursion, 'dnssec_validation': dnssec_validation})
         lab_conf_lines.append(f"{dname}[0]={lan}")
         lab_conf_lines.append(f'{dname}[image]="kathara/base"')
         lab_conf_lines.append("")
