@@ -642,28 +642,12 @@ def crea_dns_host(base_path, name, ip_cidr, gateway_cidr, lan, forwarders=None, 
         ip_root = host_ip
     import datetime
     serial = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d') + '01'
-    if root_type == 'master':
-        db_root_lines = [
-            '$TTL 60000',
-            '@ IN SOA ROOT-SERVER. root.ROOT-SERVER. (',
-            f'    {serial} ; serial',
-            '    28800 ;  refresh',
-            '    14400 ; retry',
-            '    3600000 ; expire',
-            '    0 ; negative cache ttl',
-            ')',
-            '',
-            '@                  IN   NS   ROOT-SERVER.',
-            f'ROOT-SERVER.       IN    A   {ip_root}',
-            '',
-        ]
-    else:
-        # default/hint format
-        db_root_lines = [
-            '.      IN   NS   ROOT-SERVER.',
-            f'ROOT-SERVER.   IN    A   {ip_root}',
-            '',
-        ]
+    # Standard hint-style db.root for all DNS hosts: only the NS and the A for ROOT-SERVER
+    db_root_lines = [
+        '.      IN   NS   ROOT-SERVER.',
+        f'ROOT-SERVER.   IN    A   {ip_root}',
+        '',
+    ]
     with open(os.path.join(bind_dir, 'db.root'), 'w') as f:
         f.write('\n'.join(db_root_lines))
 
