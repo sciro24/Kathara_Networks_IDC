@@ -2159,11 +2159,8 @@ def main():
         gw = valida_ip_cidr(f"Gateway per {dname} (es. 10.20.{d}.1/24): ")
         lan = input_lan("LAN associata (es. A): ")
 
-        # Forwarders: opzionale (lascia vuoto per nessun forwarder)
+        # Forwarders: opzionale (non richiesto qui, rimane None per default)
         forwarders = None
-        fwd_input = input("Forwarders (IP separati da spazio, invio per nessuno): ").strip()
-        if fwd_input:
-            forwarders = [x.strip() for x in fwd_input.split() if x.strip()]
 
         # Zones (opzionali) - GUIDA: qui puoi creare zone authoritative su questo host.
         # Se l'host è 'root' non chiediamo di aggiungere zone authoritative (regola speciale per root)
