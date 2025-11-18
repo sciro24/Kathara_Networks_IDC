@@ -2253,6 +2253,63 @@ def main():
         lab_conf_lines.append("")
 
     # write lab.conf
+    # Se è presente almeno un host DNS, chiedi se uno di loro deve essere
+    # DNS resolver per gli altri dispositivi (host/pc/www).
+    try:
+        has_dns = any(isinstance(h, dict) and h.get('dns') for h in hosts)
+    except Exception:
+        has_dns = False
+
+    if has_dns:
+        ask_resolver = input("\nVuoi che uno dei DNS creati sia resolver per gli altri dispositivi? (s/N): ").strip().lower()
+        if ask_resolver.startswith('s'):
+            # elenca i DNS disponibili con IP
+            dns_list = [h for h in hosts if isinstance(h, dict) and h.get('dns')]
+            print("Seleziona il DNS resolver dalla lista seguente:")
+            for i, dh in enumerate(dns_list, start=1):
+                nip = str(dh.get('ip') or '')
+                nip = nip.split('/')[0] if '/' in nip else nip
+                print(f"  {i}) {dh.get('name')} - {nip}")
+            # scegli per nome o numero
+            resolver_choice = input("Inserisci il nome o il numero del DNS resolver scelto: ").strip()
+            resolver_ip = None
+            # check by number
+            if resolver_choice.isdigit():
+                idx = int(resolver_choice) - 1
+                if 0 <= idx < len(dns_list):
+                    resolver_ip = str(dns_list[idx].get('ip') or '').split('/')[0]
+            else:
+                for dh in dns_list:
+                    if dh.get('name') == resolver_choice:
+                        resolver_ip = str(dh.get('ip') or '').split('/')[0]
+                        break
+
+            if resolver_ip:
+                # crea etc/resolv.conf in tutte le cartelle dei dispositivi host/pc/www/dns
+                targets = []
+                try:
+                    targets.extend([h.get('name') for h in hosts if isinstance(h, dict) and h.get('name')])
+                except Exception:
+                    pass
+                try:
+                    targets.extend([w.get('name') for w in wwws if isinstance(w, dict) and w.get('name')])
+                except Exception:
+                    pass
+
+                for dev in set(targets):
+                    etc_dir = os.path.join(lab_path, dev, 'etc')
+                    try:
+                        os.makedirs(etc_dir, exist_ok=True)
+                        resolver_path = os.path.join(etc_dir, 'resolv.conf')
+                        with open(resolver_path, 'w') as rf:
+                            rf.write(f"nameserver {resolver_ip}\n")
+                    except Exception:
+                        # ignoriamo errori di scrittura per non bloccare la creazione
+                        pass
+                print(f"\nResolver impostato: nameserver {resolver_ip} -> creati file resolv.conf nelle cartelle dei dispositivi.")
+            else:
+                print("Scelta del resolver non valida o IP non trovato: nessun resolver impostato.")
+
     with open(os.path.join(lab_path, "lab.conf"), "w") as f:
         f.write("\n".join(lab_conf_lines).strip() + "\n")
 
