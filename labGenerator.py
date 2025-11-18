@@ -627,6 +627,20 @@ def crea_dns_host(base_path, name, ip_cidr, gateway_cidr, lan, forwarders=None, 
     with open(os.path.join(bind_dir, 'named.conf.options'), 'w') as f:
         f.write(opts_content)
 
+    # Helper per formattare record DNS in colonne allineate
+    def format_dns_record(name, rtype, value, cls='IN', name_width=16):
+        """
+        Restituisce una stringa con colonne visivamente allineate:
+        - `name` left-aligned in `name_width` caratteri
+        - poi `cls` (es. IN), `rtype` (A/NS/CNAME) e `value`, separati da tab
+
+        Esempio risultante:
+        "nome            \tIN\tA\t10.0.0.1"
+        """
+        # usa un campo nome con padding fisso, poi tab per separazione chiara
+        name_field = f"{name:<{name_width}}"
+        return f"{name_field}\t{cls}\t{rtype}\t{value}"
+
     # --- db.root ---
     # Decide se il server è root/master o hint: root_type == 'master' -> full SOA, 'hint' -> hint format
     host_ip = ip_cidr.split('/')[0] if ip_cidr else '127.0.0.1'
@@ -644,8 +658,8 @@ def crea_dns_host(base_path, name, ip_cidr, gateway_cidr, lan, forwarders=None, 
     serial = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d') + '01'
     # Standard hint-style db.root for all DNS hosts: only the NS and the A for ROOT-SERVER
     db_root_lines = [
-        '.      IN   NS   ROOT-SERVER.',
-        f'ROOT-SERVER.   IN    A   {ip_root}',
+        format_dns_record('@', 'NS', 'ROOT-SERVER.'),
+        format_dns_record('ROOT-SERVER.', 'A', ip_root),
         '',
     ]
     with open(os.path.join(bind_dir, 'db.root'), 'w') as f:
@@ -701,7 +715,7 @@ def crea_dns_host(base_path, name, ip_cidr, gateway_cidr, lan, forwarders=None, 
                 '    0 ; negative cache ttl',
                 ')',
                 '',
-                '@\t\t\t\tIN\t\tNS\t\tdns.' + f"{zname}.",
+                format_dns_record('@', 'NS', f'dns.{zname}.'),
                 '',
             ]
             # add records if provided (A/NS/CNAME/delegation etc.)
@@ -709,37 +723,37 @@ def crea_dns_host(base_path, name, ip_cidr, gateway_cidr, lan, forwarders=None, 
                 for h, ipval in records.items():
                     # support simple A record (string) or complex record (dict)
                     if isinstance(ipval, str):
-                        zone_lines.append(f"{h} IN A {ipval}")
+                        zone_lines.append(format_dns_record(h, 'A', ipval))
                         continue
                     if isinstance(ipval, dict):
                         rtype = str(ipval.get('type', 'A')).upper()
                         if rtype == 'A':
                             ipaddr = ipval.get('ip')
                             if ipaddr:
-                                zone_lines.append(f"{h} IN A {ipaddr}")
+                                zone_lines.append(format_dns_record(h, 'A', ipaddr))
                         elif rtype == 'NS':
                             ns_host = ipval.get('ns') or ipval.get('host')
                             if ns_host:
-                                zone_lines.append(f"{h} IN NS {ns_host}")
+                                zone_lines.append(format_dns_record(h, 'NS', ns_host))
                                 glue_ip = ipval.get('glue') or ipval.get('ip') or ipval.get('glue_ip')
                                 if glue_ip:
-                                    zone_lines.append(f"{ns_host} IN A {glue_ip}")
+                                    zone_lines.append(format_dns_record(ns_host, 'A', glue_ip))
                         elif rtype == 'DELEGATION':
                             child_zone = ipval.get('zone') or h
                             ns_host = ipval.get('ns')
                             ns_ip = ipval.get('ns_ip') or ipval.get('glue_ip') or ipval.get('ip')
                             if child_zone and ns_host:
-                                zone_lines.append(f"{child_zone} IN NS {ns_host}")
+                                zone_lines.append(format_dns_record(child_zone, 'NS', ns_host))
                                 if ns_ip:
-                                    zone_lines.append(f"{ns_host} IN A {ns_ip}")
+                                    zone_lines.append(format_dns_record(ns_host, 'A', ns_ip))
                         elif rtype == 'CNAME':
                             target = ipval.get('target')
                             if target:
-                                zone_lines.append(f"{h} IN CNAME {target}")
+                                zone_lines.append(format_dns_record(h, 'CNAME', target))
                         else:
                             ipaddr = ipval.get('ip')
                             if ipaddr:
-                                zone_lines.append(f"{h} IN A {ipaddr}")
+                                zone_lines.append(format_dns_record(h, 'A', ipaddr))
             with open(zone_file_path, 'w') as f:
                 f.write('\n'.join(zone_lines) + '\n')
 
