@@ -11,6 +11,7 @@ import subprocess
 import argparse
 import json
 import sys
+import re
 
 # -------------------------
 # Utility input / validazioni
@@ -68,13 +69,17 @@ def valida_ip_senza_cidr(prompt):
             print("❌ IP non valido. Inserisci un IPv4 (es. 10.0.0.2)")
 
 def valida_protocols(prompt):
-    allowed = {"bgp", "ospf", "rip"}
+    allowed = {"bgp", "ospf", "rip", "statico"}
     while True:
         s = input(prompt).strip().lower().replace(",", " ")
+        # Non permettere input vuoto: l'utente deve indicare almeno un valore
+        if not s:
+            print("❌ Inserisci almeno un protocollo (bgp/ospf/rip/statico).")
+            continue
         toks = [t for t in s.split() if t]
         if toks and all(t in allowed for t in toks):
             return list(dict.fromkeys(toks))
-        print("❌ Usa solo: bgp ospf rip")
+        print("❌ Usa solo: bgp ospf rip statico")
 
 # -------------------------
 # Templates
@@ -425,6 +430,50 @@ def format_ospf_multi_area(area_nets_map, stub_areas=None):
 # Creazione file router
 # -------------------------
 def crea_router_files(base_path, rname, data):
+    # Se il router è marcato come 'statico' (cioè l'utente ha scelto solo
+    # il token 'statico' tra i protocolli), non creiamo la cartella del
+    # router né i file FRR: generiamo solo lo startup con IP e rotte statiche.
+    protos = data.get("protocols") or []
+    only_static = ('statico' in protos) and all(p == 'statico' for p in protos)
+    if only_static:
+        ip_cfg_lines = [f"ip address add {iface['ip']} dev {iface.get('name','eth0')}" for iface in data.get('interfaces', [])]
+        # static_routes può essere una lista di stringhe o dict.
+        # Esempio dict: {"network":"30.0.0.0/24","via":"10.0.0.13","dev":"eth0"}
+        static_routes = data.get('static_routes', []) or []
+        route_lines = []
+        # default dev se non specificato: prima interfaccia o 'eth0'
+        default_dev = (data.get('interfaces') and data.get('interfaces')[0].get('name')) or 'eth0'
+        for r in static_routes:
+            if isinstance(r, str):
+                # se l'utente ha fornito la stringa completa, rimuoviamo
+                # eventuale maschera dal next-hop (es. 'via 10.0.0.13/30' -> 'via 10.0.0.13')
+                s = r
+                # sostituisce pattern 'via <ip>/<mask>' con 'via <ip>'
+                s = re.sub(r"(via\s+)([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/\d+", r"\1\2", s)
+                route_lines.append(f"ip route add {s}")
+            elif isinstance(r, dict):
+                net = r.get('network') or r.get('net') or r.get('dest')
+                via = r.get('via') or r.get('nexthop') or r.get('gw')
+                dev = r.get('dev') or r.get('if') or default_dev
+                # rimuovi la maschera dal next-hop se presente
+                if isinstance(via, str) and '/' in via:
+                    via = via.split('/')[0]
+                if net and via:
+                    route_lines.append(f"ip route add {net} via {via} dev {dev}")
+                elif net and dev:
+                    route_lines.append(f"ip route add {net} dev {dev}")
+                elif isinstance(r.get('cmd'), str):
+                    route_lines.append(r.get('cmd'))
+        startup_lines = ip_cfg_lines + route_lines
+        startup_path = os.path.join(base_path, f"{rname}.startup")
+        with open(startup_path, "w") as f:
+            f.write("\n".join(startup_lines) + "\n")
+        try:
+            os.chmod(startup_path, 0o755)
+        except Exception:
+            pass
+        return
+
     etc_frr = os.path.join(base_path, rname, "etc", "frr")
     os.makedirs(etc_frr, exist_ok=True)
 
@@ -1291,6 +1340,196 @@ def policies_menu(base_path, routers):
             print(f"✅ Aggiunta route-map {rm_name} (set metric {m_val}) su {src} per neighbor {neigh_ip} (out).")
 
 
+def assegna_resolv_conf(base_path):
+    """
+    Interattivo per assegnare un file `resolv.conf` a un singolo dispositivo
+    presente nella cartella `base_path`.
+
+    Opzioni:
+    1) imposta un unico nameserver (IP)
+    2) inserisci il contenuto completo di resolv.conf (termina con una linea '.' da sola)
+    3) copia il `resolv.conf` da un altro dispositivo che lo possiede
+    """
+    # elenca sottocartelle (dispositivi)
+    try:
+        items = sorted([d for d in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, d)) and not d.startswith('.')])
+    except Exception:
+        print('Errore leggendo la cartella del laboratorio.')
+        return
+
+    if not items:
+        print('Nessun dispositivo trovato nella cartella del lab.')
+        return
+
+    print('\nDispositivi trovati nel lab:')
+    for i, d in enumerate(items, start=1):
+        print(f"  {i}) {d}")
+
+    sel = input('Seleziona il dispositivo (numero o nome) o premi INVIO per annullare: ').strip()
+    if not sel:
+        print('Operazione annullata.')
+        return
+
+    target = None
+    if sel.isdigit():
+        idx = int(sel) - 1
+        if 0 <= idx < len(items):
+            target = items[idx]
+    else:
+        if sel in items:
+            target = sel
+
+    if not target:
+        print('Selezione non valida.')
+        return
+
+    etc_dir = os.path.join(base_path, target, 'etc')
+    os.makedirs(etc_dir, exist_ok=True)
+    dest_path = os.path.join(etc_dir, 'resolv.conf')
+
+    print('\nModalità di impostazione resolv.conf:')
+    print('  1) Imposta un unico nameserver (IP)')
+    print("  2) Inserisci contenuto completo (termina con '.' su linea separata)")
+    # trova dispositivi con resolv.conf già presente
+    available_sources = []
+    for d in items:
+        src = os.path.join(base_path, d, 'etc', 'resolv.conf')
+        if os.path.isfile(src):
+            available_sources.append((d, src))
+    if available_sources:
+        print('  3) Copia resolv.conf da un altro dispositivo (se presente)')
+    choice = input('Seleziona modalità (1/2/3) o INVIO per annullare: ').strip()
+    if not choice:
+        print('Operazione annullata.')
+        return
+
+    try:
+        if choice == '1':
+            # Cerca un IP (IPv4) all'interno delle cartelle dei dispositivi per presentare
+            # una lista di possibili nameserver: prendiamo il primo IPv4 trovato per dispositivo.
+            import re
+            candidate_ns = []
+            ip_re = re.compile(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b")
+            for d in items:
+                dev_dir = os.path.join(base_path, d)
+                found_ip = None
+                try:
+                    for root, _, files in os.walk(dev_dir):
+                        for fn in files:
+                            fpath = os.path.join(root, fn)
+                            try:
+                                with open(fpath, 'r', encoding='utf-8', errors='ignore') as fh:
+                                    for line in fh:
+                                        m = ip_re.search(line)
+                                        if m:
+                                            cand = m.group(0)
+                                            try:
+                                                ipaddress.ip_address(cand)
+                                                found_ip = cand
+                                                break
+                                            except Exception:
+                                                continue
+                                    if found_ip:
+                                        break
+                            except Exception:
+                                continue
+                        if found_ip:
+                            break
+                except Exception:
+                    pass
+                if found_ip:
+                    candidate_ns.append((d, found_ip))
+
+            if candidate_ns:
+                print('\nDispositivi candidati come nameserver:')
+                for i, (d, ip) in enumerate(candidate_ns, start=1):
+                    print(f"  {i}) {d} - {ip}")
+                print("  M) Inserisci manualmente un IP")
+                selns = input('Seleziona il nameserver (numero) o M per manuale, INVIO per annullare: ').strip()
+                if not selns:
+                    print('Operazione annullata.')
+                    return
+                if selns.lower() == 'm':
+                    manual = input_non_vuoto('Inserisci l\'IP del nameserver (es. 10.0.0.1): ').strip()
+                    try:
+                        ipaddress.ip_address(manual)
+                        ns_ip = manual
+                    except Exception:
+                        print('IP non valido. Nessuna modifica effettuata.')
+                        return
+                else:
+                    if not selns.isdigit():
+                        print('Selezione non valida.')
+                        return
+                    idx = int(selns) - 1
+                    if not (0 <= idx < len(candidate_ns)):
+                        print('Selezione non valida.')
+                        return
+                    ns_ip = candidate_ns[idx][1]
+            else:
+                # nessun candidato trovato, fallback a inserimento manuale
+                print('Nessun IP candidato trovato nelle cartelle dei dispositivi.')
+                manual = input_non_vuoto('Inserisci l\'IP del nameserver (es. 10.0.0.1): ').strip()
+                try:
+                    ipaddress.ip_address(manual)
+                    ns_ip = manual
+                except Exception:
+                    print('IP non valido. Nessuna modifica effettuata.')
+                    return
+
+            # Scrive il file con la forma esatta richiesta: "nameserver <IP>\n"
+            try:
+                with open(dest_path, 'w') as f:
+                    f.write(f"nameserver {ns_ip}\n")
+                print(f"✅ Wrote {dest_path} with nameserver {ns_ip}")
+            except Exception as e:
+                print('Errore scrivendo il file:', e)
+
+        elif choice == '2':
+            print("Inserisci il contenuto di resolv.conf. Termina con una linea contenente solo '.'")
+            lines = []
+            while True:
+                try:
+                    ln = input()
+                except EOFError:
+                    break
+                if ln.strip() == '.':
+                    break
+                lines.append(ln)
+            if not lines:
+                print('Nessun contenuto inserito. Nessuna modifica effettuata.')
+            else:
+                with open(dest_path, 'w') as f:
+                    f.write('\n'.join(lines).rstrip() + '\n')
+                print(f"✅ Contenuto scritto in {dest_path}")
+
+        elif choice == '3' and available_sources:
+            print('\nDispositivi con resolv.conf disponibile:')
+            for i, (d, p) in enumerate(available_sources, start=1):
+                print(f"  {i}) {d}")
+            src_sel = input('Seleziona il dispositivo sorgente (numero) o INVIO per annullare: ').strip()
+            if not src_sel:
+                print('Operazione annullata.')
+                return
+            if not src_sel.isdigit():
+                print('Selezione non valida.')
+                return
+            sidx = int(src_sel) - 1
+            if not (0 <= sidx < len(available_sources)):
+                print('Selezione non valida.')
+                return
+            src_path = available_sources[sidx][1]
+            try:
+                shutil.copyfile(src_path, dest_path)
+                print(f"✅ Copiato {src_path} -> {dest_path}")
+            except Exception as e:
+                print('Errore copiando il file:', e)
+        else:
+            print('Scelta non valida o nessuna sorgente disponibile.')
+    except Exception as e:
+        print('Errore durante l\'impostazione di resolv.conf:', e)
+
+
 def menu_post_creazione(base_path, routers):
     while True:
         print("\n\n-------------- Menu post-creazione --------------\n")
@@ -1299,10 +1538,11 @@ def menu_post_creazione(base_path, routers):
         print('2) Rigenera file XML del laboratorio (da file modificati)')
         print('3) Genera comando ping per tutti gli indirizzi del lab (copia/incolla)')
         print('4) Policies (prefix-list / route-map semplificate per BGP)')
+        print('5) Assegna un file resolv.conf specifico a un dispositivo')
         print('0) Termina Programma\n')
         # footer: mostrato in basso per identificazione dell'autore
         print('\n--------------------------------------------------')
-        print('----- Programma realizzato da Diego Scirocco -----')
+        print('----- Programma realizzato da sciro24 (Github) -----')
         print('--------------------------------------------------\n')
 
 
@@ -1336,6 +1576,8 @@ def menu_post_creazione(base_path, routers):
                 print('Errore generando il comando ping:', e)
         elif choice == '4':
             policies_menu(base_path, routers)
+        elif choice == '5':
+            assegna_resolv_conf(base_path)
         else:
             print('Scelta non valida, riprova.')
 
@@ -1999,7 +2241,7 @@ def main():
                 continue
             break
         print(f"--- Configurazione router {rname} ---")
-        protocols = valida_protocols(f"Protocolli attivi su {rname} (bgp/ospf/rip, separati da spazio/virgola): ")
+        protocols = valida_protocols(f"Protocolli attivi su {rname} (bgp/ospf/rip/statico, separati da spazio/virgola): ")
         asn = ""
         if "bgp" in protocols:
             asn = input_non_vuoto("Numero AS BGP: ")
@@ -2044,11 +2286,31 @@ def main():
                 break
             interfaces.append({"name": eth, "lan": lan, "ip": ip_cidr})
             lab_conf_lines.append(f"{rname}[{idx}]={lan}")
-        # fine ciclo interfacce: aggiungi la riga image e la linea vuota una sola volta
-        lab_conf_lines.append(f'{rname}[image]="kathara/frr"')
+        # fine ciclo interfacce: aggiungi la riga image solo se il router
+        # usa realmente un protocollo di routing (bgp/ospf/rip). Se è
+        # 'statico' o non ha protocolli, non mettiamo l'immagine FRR.
+        if any(p in protocols for p in ("bgp", "ospf", "rip")):
+            lab_conf_lines.append(f'{rname}[image]="kathara/frr"')
         lab_conf_lines.append("")  # blank line
         # salva i dati del router e genera i file (frr.conf, startup, ecc.)
         rdata = {"protocols": protocols, "asn": asn, "interfaces": interfaces}
+        # Se l'utente ha selezionato 'statico' tra i protocolli, chiedi le rotte
+        # statiche (altrimenti non chiedere nulla).
+        if 'statico' in protocols:
+            n_static = input_int("Numero di rotte statiche (0 se nessuna): ", 0)
+            static_routes = []
+            for si in range(n_static):
+                print(f"Rotta statica #{si+1}:")
+                net = input_non_vuoto("  Destinazione (es. 30.0.0.0/24): ")
+                via = input_non_vuoto("  Via / next-hop (es. 10.0.0.13): ")
+                # rimuovi eventuale maschera dal next-hop immediatamente
+                via = via.split('/')[0] if '/' in via else via
+                dev = input(f"  Interfaccia (vuoto -> {interfaces[0]['name']}): ").strip()
+                r = {"network": net, "via": via}
+                if dev:
+                    r['dev'] = dev
+                static_routes.append(r)
+            rdata['static_routes'] = static_routes
         if "ospf" in protocols:
             rdata['ospf_area'] = ospf_area
             rdata['ospf_area_stub'] = ospf_stub
