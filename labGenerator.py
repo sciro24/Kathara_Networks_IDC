@@ -1437,7 +1437,7 @@ def export_lab_to_xml(lab_name, lab_path, routers, hosts, wwws):
         out_path = os.path.join(lab_path, f"{lab_name}.xml")
         with open(out_path, 'wb') as f:
             f.write(pretty)
-        print(f"✅ Esportato XML: {out_path}")
+        print(f"\n\n✅ Esportato XML: {out_path}")
     except Exception as e:
         print('Errore esportazione XML:', e)
  
@@ -2113,17 +2113,38 @@ def main():
     # DNS hosts
     dns_root_ip = None
     for d in range(1, n_dns + 1):
-        default_dname = f"dns{d}"
-        while True:
-            dname_in = input(f"\nNome host DNS (default {default_dname}): ").strip()
-            dname = dname_in if dname_in else default_dname
+        # Il primo host DNS deve essere per forza il server root
+        if d == 1:
+            dname = 'root'
+            print(f"\nNome host DNS forzato per il primo DNS: '{dname}' (server root/master)")
             if ' ' in dname:
-                print("Il nome non può contenere spazi.")
-                continue
+                # sanity check (non dovrebbe mai accadere)
+                raise ValueError("Nome 'root' non valido")
             if dname in used_names:
-                print(f"Nome '{dname}' già usato. Scegli un altro.")
-                continue
-            break
+                # se 'root' è già usato, chiediamo all'utente di inserire un altro nome
+                print(f"Nome '{dname}' è già stato usato. Inserisci un nome alternativo per il primo DNS.")
+                while True:
+                    dname_in = input(f"\nNome host DNS (il primo deve essere root, ma '{dname}' non è disponibile): ").strip()
+                    dname = dname_in if dname_in else dname
+                    if ' ' in dname:
+                        print("Il nome non può contenere spazi.")
+                        continue
+                    if dname in used_names:
+                        print(f"Nome '{dname}' già usato. Scegli un altro.")
+                        continue
+                    break
+        else:
+            default_dname = f"dns{d}"
+            while True:
+                dname_in = input(f"\nNome host DNS (default {default_dname}): ").strip()
+                dname = dname_in if dname_in else default_dname
+                if ' ' in dname:
+                    print("Il nome non può contenere spazi.")
+                    continue
+                if dname in used_names:
+                    print(f"Nome '{dname}' già usato. Scegli un altro.")
+                    continue
+                break
         used_names.add(dname)
         print(f"--- Configurazione host DNS {dname} ---")
         # richiedi IP controllando duplicati
@@ -2145,72 +2166,81 @@ def main():
             forwarders = [x.strip() for x in fwd_input.split() if x.strip()]
 
         # Zones (opzionali) - GUIDA: qui puoi creare zone authoritative su questo host.
-        # Esempio: zone come 'example.local' contenenti record A, NS, CNAME o delegazioni.
-        # Per ogni record scegli il tipo (A/NS/CNAME/DELEGATION) e compila i campi richiesti.
+        # Se l'host è 'root' non chiediamo di aggiungere zone authoritative (regola speciale per root)
         zones = None
-        add_z = input("Aggiungere zone authoritative su questo host? (s/N): ").strip().lower()
-        if add_z.startswith('s'):
-            zones = {}
-            nz = input_int("Numero di zone da creare su questo host: ", 0)
-            for zi in range(1, nz+1):
-                zname = input_non_vuoto(f"  Nome zona {zi} (nome Host DNS in questione): ")
-                print(f"  Creazione zona '{zname}': inserisci i record desiderati.")
-                records = {}
-                nr = input_int(f"  Quanti record vuoi aggiungere nella zona '{zname}'? ", 0)
-                for r in range(1, nr+1):
-                    print(f"    Record {r} (formati supportati: A, NS, CNAME, DELEGATION)")
-                    rtype = input_non_vuoto("      Tipo record (A/NS/CNAME/DELEGATION): ").strip().upper()
-                    if rtype == 'A':
-                        h = input_non_vuoto("      Nome host (es. dns.it): ")
-                        rip = valida_ip_cidr("      IP (es. 10.20.1.10/24): ")
-                        records[h] = rip.split('/')[0]
-                    elif rtype == 'NS':
-                        h = input_non_vuoto("      Nome delegato (es. @ per la zona): ")
-                        nsname = input_non_vuoto("      Nome del nameserver (es. dns.example.local.): ")
-                        glue = input("      Glue IP per il nameserver (opzionale, invio per saltare): ").strip()
-                        rec = {'type': 'NS', 'ns': nsname}
-                        if glue:
-                            rec['glue'] = glue
-                        records[h] = rec
-                    elif rtype == 'CNAME':
-                        h = input_non_vuoto("      Nome alias (es. ftp): ")
-                        target = input_non_vuoto("      Target canonical name (es. www): ")
-                        records[h] = {'type': 'CNAME', 'target': target}
-                    elif rtype == 'DELEGATION':
-                        child = input_non_vuoto("      Nome sottodominio da delegare (es. sub): ")
-                        nsname = input_non_vuoto("      Nameserver per la delega (es. ns.sub.example.local.): ")
-                        ns_ip = input("      Glue IP per il nameserver (opzionale): ").strip()
-                        rec = {'type': 'DELEGATION', 'zone': child, 'ns': nsname}
-                        if ns_ip:
-                            rec['ns_ip'] = ns_ip
-                        # store delegation using the child label as key
-                        records[child] = rec
-                    else:
-                        print("      Tipo record non riconosciuto, salto questo record.")
-                zones[zname] = records
+        if dname != 'root':
+            add_z = input("Aggiungere zone authoritative su questo host? (s/N): ").strip().lower()
+            if add_z.startswith('s'):
+                zones = {}
+                nz = input_int("Numero di zone da creare su questo host: ", 0)
+                for zi in range(1, nz+1):
+                    zname = input_non_vuoto(f"  Nome zona {zi} (nome Host DNS in questione): ")
+                    print(f"  Creazione zona '{zname}': inserisci i record desiderati.")
+                    records = {}
+                    nr = input_int(f"  Quanti record vuoi aggiungere nella zona '{zname}'? ", 0)
+                    for r in range(1, nr+1):
+                        print(f"    Record {r} (formati supportati: A, NS, CNAME, DELEGATION)")
+                        rtype = input_non_vuoto("      Tipo record (A/NS/CNAME/DELEGATION): ").strip().upper()
+                        if rtype == 'A':
+                            h = input_non_vuoto("      Nome host (es. dns.it): ")
+                            rip = valida_ip_cidr("      IP (es. 10.20.1.10/24): ")
+                            records[h] = rip.split('/')[0]
+                        elif rtype == 'NS':
+                            h = input_non_vuoto("      Nome delegato (es. @ per la zona): ")
+                            nsname = input_non_vuoto("      Nome del nameserver (es. dns.example.local.): ")
+                            glue = input("      Glue IP per il nameserver (opzionale, invio per saltare): ").strip()
+                            rec = {'type': 'NS', 'ns': nsname}
+                            if glue:
+                                rec['glue'] = glue
+                            records[h] = rec
+                        elif rtype == 'CNAME':
+                            h = input_non_vuoto("      Nome alias (es. ftp): ")
+                            target = input_non_vuoto("      Target canonical name (es. www): ")
+                            records[h] = {'type': 'CNAME', 'target': target}
+                        elif rtype == 'DELEGATION':
+                            child = input_non_vuoto("      Nome sottodominio da delegare (es. sub): ")
+                            nsname = input_non_vuoto("      Nameserver per la delega (es. ns.sub.example.local.): ")
+                            ns_ip = input("      Glue IP per il nameserver (opzionale): ").strip()
+                            rec = {'type': 'DELEGATION', 'zone': child, 'ns': nsname}
+                            if ns_ip:
+                                rec['ns_ip'] = ns_ip
+                            # store delegation using the child label as key
+                            records[child] = rec
+                        else:
+                            print("      Tipo record non riconosciuto, salto questo record.")
+                    zones[zname] = records
 
         # chiedi se questo host deve essere root/master/hint
-        root_choice = input("Tipo server per '.' ? (m=master / h=hint / n=nessuno) [h]: ").strip().lower()
-        if root_choice == 'm':
+        # Se il nome host è 'root' forziamo il comportamento di root: sempre master
+        if dname == 'root':
             root_type = 'master'
-        elif root_choice == 'n':
-            root_type = None
-        else:
-            root_type = 'hint'
-
-        # se questo host è master, registrane l'IP per i successivi hint
-        if root_type == 'master':
+            # registra subito l'IP come IP del root master per gli hint successivi
             dns_root_ip = ip.split('/')[0]
+            # per il server root non chiediamo allow-recursion né dnssec: usiamo valori di default
+            allow_recursion = None
+            dnssec_validation = False
+        else:
+            root_choice = input("Tipo server per '.' ? (m=master / h=hint / n=nessuno) [h]: ").strip().lower()
+            if root_choice == 'm':
+                root_type = 'master'
+            elif root_choice == 'n':
+                root_type = None
+            else:
+                root_type = 'hint'
 
-        # Opzioni named.conf.options: allow-recursion e dnssec-validation
-        allow_recursion = None
-        ar = input("Vuoi aggiungere la riga 'allow-recursion { any; };' in named.conf.options? (s/N): ").strip().lower()
-        if ar.startswith('s'):
-            allow_recursion = 'any'
-        dnssec_validation = False
-        dv = input("Vuoi disabilitare DNSSEC validation scrivendo 'dnssec-validation no;'? (s/N): ").strip().lower()
-        if dv.startswith('s'):
-            dnssec_validation = True
+            # se questo host è master, registrane l'IP per i successivi hint
+            if root_type == 'master':
+                dns_root_ip = ip.split('/')[0]
+
+            # Opzioni named.conf.options: allow-recursion e dnssec-validation
+            allow_recursion = None
+            ar = input("Vuoi aggiungere la riga 'allow-recursion { any; } ?  (s/N): ").strip().lower()
+            if ar.startswith('s'):
+                allow_recursion = 'any'
+            dnssec_validation = False
+            dv = input("Vuoi disabilitare DNSSEC validation ?  (s/N): ").strip().lower()
+            if dv.startswith('s'):
+                dnssec_validation = True
 
         # crea files per DNS host; se è hint e abbiamo il root registrato, passalo
         try:
