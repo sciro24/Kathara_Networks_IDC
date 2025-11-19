@@ -81,6 +81,26 @@ def valida_protocols(prompt):
             return list(dict.fromkeys(toks))
         print("❌ Usa solo: bgp ospf rip statico")
 
+
+def print_menu(title, items, extra_options=None):
+    """Stampa un menu ordinato con titolo, una riga vuota, opzioni numerate
+
+    - `title`: stringa titolo (stampa su singola riga)
+    - `items`: lista di stringhe che saranno numerate 1..n
+    - `extra_options`: lista di tuple (chiave, etichetta) per opzioni non numeriche
+    """
+    # titolo e riga vuota
+    print(f"\n{title}\n")
+    # opzioni numerate
+    for i, it in enumerate(items, start=1):
+        print(f"  {i}) {it}")
+    # opzioni extra (es. M) Inserisci manualmente)
+    if extra_options:
+        for k, lab in extra_options:
+            print(f"  {k}) {lab}")
+    # linea vuota prima del prompt
+    print("")
+
 # -------------------------
 # Templates
 # -------------------------
@@ -1034,10 +1054,9 @@ def select_router(routers, prompt="Seleziona router:"):
     if not keys:
         print("Nessun router disponibile.")
         return None
-    print(prompt)
-    for i, k in enumerate(keys, 1):
-        asn = routers[k].get('asn','-')
-        print(f"{i}) {k} (ASN: {asn})")
+    # stampa menu ordinato
+    items = [f"{k} (ASN: {routers[k].get('asn','-')})" for k in keys]
+    print_menu(prompt, items)
     while True:
         sel = input("Numero router (o nome, vuoto per annullare): ").strip()
         if not sel:
@@ -1057,8 +1076,8 @@ def select_interface(router_data):
         print('Nessuna interfaccia disponibile per questo router.')
         return None
     ifaces = router_data['interfaces']
-    for i, it in enumerate(ifaces, 1):
-        print(f"{i}) {it.get('name')} - {it.get('ip')}")
+    items = [f"{it.get('name')} - {it.get('ip')}" for it in ifaces]
+    print_menu('Interfacce disponibili:', items)
     while True:
         sel = input('Seleziona interfaccia (numero o nome, vuoto per annullare): ').strip()
         if not sel:
@@ -1263,11 +1282,12 @@ def ensure_neighbor_exists(fpath, neigh_ip):
 def policies_menu(base_path, routers):
     """Sotto-menu per applicare policies BGP semplici ai router del lab."""
     while True:
-        print('\n=== Policies BGP (scegli) ===\n')
-        print('1) Aggiungi prefix-list (deny <rete> e permit any) e collega al neighbor (in/out)')
-        print('2) Aggiungi route-map prefIn (set local-preference) e collega al neighbor (in)')
-        print('3) Aggiungi route-map localMedOut (set metric) e collega al neighbor (out)')
-        print('0) Torna indietro\n')
+        items = [
+            'Aggiungi prefix-list (deny <rete> e permit any) e collega al neighbor (in/out)',
+            'Aggiungi route-map prefIn (set local-preference) e collega al neighbor (in)',
+            'Aggiungi route-map localMedOut (set metric) e collega al neighbor (out)'
+        ]
+        print_menu('=== Policies BGP (scegli) ===', items, extra_options=[('0', 'Torna indietro')])
         c = input('Seleziona (numero): ').strip()
         if c == '0':
             break
@@ -1386,9 +1406,7 @@ def assegna_resolv_conf(base_path):
         print('Nessun dispositivo trovato nella cartella del lab.')
         return
 
-    print('\nDispositivi trovati nel lab:')
-    for i, d in enumerate(items, start=1):
-        print(f"  {i}) {d}")
+    print_menu('Dispositivi trovati nel lab:', items)
 
     sel = input('Seleziona il dispositivo (numero o nome) o premi INVIO per annullare: ').strip()
     if not sel:
@@ -1415,21 +1433,17 @@ def assegna_resolv_conf(base_path):
     os.makedirs(etc_dir, exist_ok=True)
     dest_path = os.path.join(etc_dir, 'resolv.conf')
 
-    print('\nModalità di impostazione resolv.conf:')
-    print('  1) Imposta un unico nameserver (IP)')
-    print("  2) Inserisci contenuto completo (termina con '.' su linea separata)")
-    # trova dispositivi con resolv.conf già presente
+    # Per semplicità operativa: saltiamo il sotto-menu delle modalità e
+    # scegliamo direttamente l'opzione che interessa di più: impostare
+    # un unico nameserver. Tuttavia manteniamo la ricerca di eventuali
+    # `resolv.conf` esistenti per suggerire candidati IP.
     available_sources = []
     for d in items:
         src = os.path.join(base_path, d, 'etc', 'resolv.conf')
         if os.path.isfile(src):
             available_sources.append((d, src))
-    if available_sources:
-        print('  3) Copia resolv.conf da un altro dispositivo (se presente)')
-    choice = input('Seleziona modalità (1/2/3) o INVIO per annullare: ').strip()
-    if not choice:
-        print('Operazione annullata.')
-        return
+    # Imposta automaticamente la modalità 1 (unico nameserver)
+    choice = '1'
 
     try:
         if choice == '1':
@@ -1488,10 +1502,8 @@ def assegna_resolv_conf(base_path):
                     candidate_ns.append((d, found_ip))
 
             if candidate_ns:
-                print('\nDispositivi candidati come nameserver:')
-                for i, (d, ip) in enumerate(candidate_ns, start=1):
-                    print(f"  {i}) {d} - {ip}")
-                print("  M) Inserisci manualmente un IP")
+                items = [f"{d} - {ip}" for (d, ip) in candidate_ns]
+                print_menu('Dispositivi candidati come nameserver:', items, extra_options=[('M', 'Inserisci manualmente un IP')])
                 selns = input('Seleziona il nameserver (numero) o M per manuale, INVIO per annullare: ').strip()
                 if not selns:
                     print('Operazione annullata.')
@@ -1551,9 +1563,8 @@ def assegna_resolv_conf(base_path):
                 print(f"✅ Contenuto scritto in {dest_path}")
 
         elif choice == '3' and available_sources:
-            print('\nDispositivi con resolv.conf disponibile:')
-            for i, (d, p) in enumerate(available_sources, start=1):
-                print(f"  {i}) {d}")
+            items = [d for (d, p) in available_sources]
+            print_menu('Dispositivi con resolv.conf disponibile:', items)
             src_sel = input('Seleziona il dispositivo sorgente (numero) o INVIO per annullare: ').strip()
             if not src_sel:
                 print('Operazione annullata.')
@@ -1579,19 +1590,18 @@ def assegna_resolv_conf(base_path):
 
 def menu_post_creazione(base_path, routers):
     while True:
-        print("\n\n-------------- Menu post-creazione --------------\n")
-        print("Scegli una opzione:\n")
-        print('1) Imposta costo OSPF su una interfaccia di un router')
-        print('2) Rigenera file XML del laboratorio (da file modificati)')
-        print('3) Genera comando ping per tutti gli indirizzi del lab (copia/incolla)')
-        print('4) Policies (prefix-list / route-map semplificate per BGP)')
-        print('5) Assegna un file resolv.conf specifico a un dispositivo')
-        print('0) Termina Programma\n')
+        items = [
+            'Imposta costo OSPF su una interfaccia di un router',
+            'Rigenera file XML del laboratorio (da file modificati)',
+            'Genera comando ping per tutti gli indirizzi del lab (copia/incolla)',
+            'Policies (prefix-list / route-map semplificate per BGP)',
+            'Assegna un file resolv.conf specifico a un dispositivo'
+        ]
+        print_menu('-------------- Menu post-creazione --------------', items, extra_options=[('0', 'Termina Programma')])
         # footer: mostrato in basso per identificazione dell'autore
         print('\n--------------------------------------------------')
-        print('----- Programma realizzato da sciro24 (Github) -----')
+        print('---- Programma realizzato da sciro24 (Github) ----')
         print('--------------------------------------------------\n')
-
 
         choice = input('Seleziona (numero): ').strip()
         if choice == '0':
@@ -2143,12 +2153,13 @@ def main():
     print("  I - Importa da file (XML/JSON)")
     print("  R - Rigenera XML di un lab esistente")
     print("  G - Genera comando PING per un lab esistente (copia/incolla)")
+    print("  A - Assegna un file resolv.conf specifico a un dispositivo")
     print("  P - Applica Policies BGP")
     print("  Q - Esci\n")
     print("------------------------------------------------------\n")
 
     while True:
-        mode = input_non_vuoto("Seleziona (C/I/R/G/P/Q): ").strip().lower()
+        mode = input_non_vuoto("Seleziona (C/I/R/G/A/P/Q): ").strip().lower()
         if not mode:
             continue
         if mode.startswith('q'):
@@ -2218,6 +2229,17 @@ def main():
             print('\n=== Comando ping generato (copia/incolla sulle macchine del lab) ===\n\n')
             print(cmd)
             print('\n\n=== Fine comando ===\n')
+            # torna al menu principale
+            continue
+        if mode.startswith('a'):
+            target = input_non_vuoto('Percorso della directory del lab (es. /path/to/lab): ').strip()
+            if not os.path.isdir(target):
+                print(f"Directory non trovata: {target}")
+                continue
+            try:
+                assegna_resolv_conf(target)
+            except Exception as e:
+                print('Errore assegnando resolv.conf:', e)
             # torna al menu principale
             continue
         if mode.startswith('p'):
@@ -2588,11 +2610,8 @@ def main():
         if ask_resolver.startswith('s'):
             # elenca i DNS disponibili con IP
             dns_list = [h for h in hosts if isinstance(h, dict) and h.get('dns')]
-            print("Seleziona il DNS resolver dalla lista seguente:")
-            for i, dh in enumerate(dns_list, start=1):
-                nip = str(dh.get('ip') or '')
-                nip = nip.split('/')[0] if '/' in nip else nip
-                print(f"  {i}) {dh.get('name')} - {nip}")
+            items = [f"{dh.get('name')} - { (str(dh.get('ip') or '')).split('/')[0] }" for dh in dns_list]
+            print_menu('Seleziona il DNS resolver dalla lista seguente:', items)
             # scegli per nome o numero
             resolver_choice = input("Inserisci il nome o il numero del DNS resolver scelto: ").strip()
             resolver_ip = None
