@@ -982,6 +982,102 @@ def add_neighbor_if_missing(base_path, src_router, neigh_ip, neigh_asn, desc=Non
     # altrimenti appendiamo a fine file
     insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=lines)
 
+
+def add_ibgp_loopback_neighbors(base_path, routers):
+    """
+    Cerca tutte le coppie di router che hanno BGP abilitato e lo stesso ASN
+    e che dispongono di almeno una loopback ciascuno. Per ogni coppia crea
+    nei rispettivi `frr.conf` le righe iBGP basate sulle loopback:
+
+      neighbor <peer-loopback> remote-as <asn>
+      neighbor <peer-loopback> update-source <local-loopback>
+
+    Questa funzione evita di duplicare righe esistenti.
+    """
+    # helper per garantire la coppia su due router
+    def _ensure_pair(r_local, r_peer):
+        r_local_data = routers.get(r_local, {})
+        r_peer_data = routers.get(r_peer, {})
+        if not r_local_data or not r_peer_data:
+            return
+        asn_local = str(r_local_data.get('asn', '')).strip()
+        asn_peer = str(r_peer_data.get('asn', '')).strip()
+        if not asn_local or asn_local != asn_peer:
+            return
+        # prendiamo la prima loopback disponibile per ciascun router
+        lbs_local = r_local_data.get('loopbacks') or []
+        lbs_peer = r_peer_data.get('loopbacks') or []
+        if not lbs_local or not lbs_peer:
+            return
+        lb_local = _strip_cidr(lbs_local[0])
+        lb_peer = _strip_cidr(lbs_peer[0])
+        if not lb_local or not lb_peer:
+            return
+
+        # files frr.conf
+        f_local = os.path.join(base_path, r_local, 'etc', 'frr', 'frr.conf')
+        f_peer = os.path.join(base_path, r_peer, 'etc', 'frr', 'frr.conf')
+
+        # assicurati che i file esistano
+        if not os.path.exists(f_local) or not os.path.exists(f_peer):
+            return
+
+        # leggi contenuti per verifica duplicati
+        try:
+            with open(f_local, 'r') as fh:
+                cont_local = fh.read()
+        except Exception:
+            cont_local = ''
+        try:
+            with open(f_peer, 'r') as fh:
+                cont_peer = fh.read()
+        except Exception:
+            cont_peer = ''
+
+        # prepara righe da inserire in r_local per parlare con r_peer
+        to_add_local = []
+        if f"neighbor {lb_peer} remote-as" not in cont_local:
+            to_add_local.append(f"neighbor {lb_peer} remote-as {asn_local}")
+        if f"neighbor {lb_peer} update-source" not in cont_local:
+            to_add_local.append(f"neighbor {lb_peer} update-source {lb_local}")
+
+        # prepara righe da inserire in r_peer per parlare con r_local
+        to_add_peer = []
+        if f"neighbor {lb_local} remote-as" not in cont_peer:
+            to_add_peer.append(f"neighbor {lb_local} remote-as {asn_local}")
+        if f"neighbor {lb_local} update-source" not in cont_peer:
+            to_add_peer.append(f"neighbor {lb_local} update-source {lb_peer}")
+
+        # inserisci dentro il blocco router bgp <asn>
+        if to_add_local:
+            insert_lines_into_protocol_block(f_local, proto='bgp', asn=asn_local, lines=to_add_local)
+            print(f"✅ Aggiunti iBGP neighbor su {r_local}: {', '.join(to_add_local)}")
+        if to_add_peer:
+            insert_lines_into_protocol_block(f_peer, proto='bgp', asn=asn_local, lines=to_add_peer)
+            print(f"✅ Aggiunti iBGP neighbor su {r_peer}: {', '.join(to_add_peer)}")
+
+    # cicla per tutte le coppie (n^2) — i dati sono piccoli, va bene
+    names = [n for n in routers.keys()]
+    for i in range(len(names)):
+        for j in range(i+1, len(names)):
+            n1 = names[i]
+            n2 = names[j]
+            # entrambi devono avere BGP abilitato
+            if 'bgp' not in routers.get(n1, {}).get('protocols', []) or 'bgp' not in routers.get(n2, {}).get('protocols', []):
+                continue
+            # devono avere ASN uguale e non vuoto
+            asn1 = str(routers.get(n1, {}).get('asn', '')).strip()
+            asn2 = str(routers.get(n2, {}).get('asn', '')).strip()
+            if not asn1 or asn1 != asn2:
+                continue
+            # devono avere almeno una loopback ciascuno
+            lbs1 = routers.get(n1, {}).get('loopbacks') or []
+            lbs2 = routers.get(n2, {}).get('loopbacks') or []
+            if not lbs1 or not lbs2:
+                continue
+            # ensure pair both ways
+            _ensure_pair(n1, n2)
+
 # -------------------------
 # Modifica frr.conf con editor
 # -------------------------
@@ -1620,12 +1716,64 @@ def aggiungi_loopback_menu(base_path, routers):
     - Per altri dispositivi con file `.startup`: aggiunge solo la riga allo startup.
     """
     print('\n--- Aggiungi loopback ad un dispositivo ---')
-    typ = input("Vuoi aggiungere la loopback a un Router (R) o ad un altro dispositivo (D)? (R/D): ").strip().lower()
-    if typ.startswith('r'):
-        target = select_router(routers, prompt='Seleziona il router a cui aggiungere la loopback:')
-        if not target:
-            print('Operazione annullata.')
+    # Mostra direttamente la lista dei dispositivi disponibili: router + file .startup
+    router_names = list(routers.keys()) if routers else []
+    startup_devices = []
+    try:
+        for fn in os.listdir(base_path):
+            if fn.endswith('.startup'):
+                startup_devices.append(fn[:-8])
+    except Exception:
+        pass
+
+    only_startup = [d for d in startup_devices if d not in router_names]
+    items = []
+    for r in router_names:
+        asn = routers.get(r, {}).get('asn', '')
+        items.append(f"{r} (router, ASN: {asn})")
+    for d in only_startup:
+        items.append(f"{d} (device)")
+
+    if not items:
+        print('Nessun dispositivo trovato nella cartella del lab.')
+        return
+
+    print_menu('Seleziona il dispositivo su cui aggiungere la loopback:', items)
+    sel = input('Seleziona il dispositivo (numero o nome, vuoto per annullare): ').strip()
+    if not sel:
+        print('Operazione annullata.')
+        return
+
+    target = None
+    if sel.isdigit():
+        idx = int(sel) - 1
+        if 0 <= idx < len(items):
+            if idx < len(router_names):
+                target = router_names[idx]
+            else:
+                target = only_startup[idx - len(router_names)]
+        else:
+            print('Selezione non valida.')
             return
+    else:
+        # nome diretto
+        if sel in router_names:
+            target = sel
+        elif sel in only_startup:
+            target = sel
+        else:
+            print('Selezione non valida.')
+            return
+
+    # marca il tipo per il codice esistente
+    typ = 'r' if target in router_names else 'd'
+    if typ.startswith('r'):
+        # seleziona router solo se non abbiamo già impostato target
+        if not target or target not in routers:
+            target = select_router(routers, prompt='Seleziona il router a cui aggiungere la loopback:')
+            if not target:
+                print('Operazione annullata.')
+                return
         ip_only = valida_ip_senza_cidr('IP loopback (es. 1.2.3.4): ')
         ipcidr = ip_only + '/32'
         # memorizza nel metadata
@@ -1675,7 +1823,13 @@ def aggiungi_loopback_menu(base_path, routers):
                 insert_lines_into_protocol_block(fpath, proto='ospf', asn=None, lines=[f"network {ipcidr} area {area}"])
             if 'rip' in protos:
                 insert_lines_into_protocol_block(fpath, proto='rip', asn=None, lines=[f"network {ipcidr}"])
-            print(f"\n\n✅ Loopback {ipcidr} aggiunta a router {target} (startup aggiornato).")
+            # Prova ad aggiungere automaticamente iBGP neighbors via loopback
+            try:
+                add_ibgp_loopback_neighbors(base_path, routers)
+            except Exception:
+                # non blocchiamo l'operazione principale se fallisce
+                pass
+            print(f"\n\n✅ Loopback {ipcidr} aggiunta a router {target} (startup aggiornato).\n")
         else:
             print(f"⚠️ frr.conf non trovato per {target}; è stata aggiornata solo la startup (se esistente).")
         return
@@ -1707,7 +1861,7 @@ def aggiungi_loopback_menu(base_path, routers):
     if not target:
         print('Selezione non valida.')
         return
-    ip_only = valida_ip_senza_cidr('IP loopback (es. 1.2.3.4): ')
+    ip_only = valida_ip_senza_cidr('\nIP loopback (es. 1.2.3.4): ')
     ipcidr = ip_only + '/32'
     startup = os.path.join(base_path, f"{target}.startup")
     try:
