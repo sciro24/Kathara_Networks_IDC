@@ -686,6 +686,24 @@ def crea_dns_host(base_path, name, ip_cidr, gateway_cidr, lan, forwarders=None, 
         Esempio risultante:
         "nome            \tIN\tA\t10.0.0.1"
         """
+        # Normalizza i nomi/valori per assicurare il punto finale sui FQDN
+        # Non modificare il record speciale '@'
+        def _is_ip(s):
+            try:
+                ipaddress.ip_address(s)
+                return True
+            except Exception:
+                return False
+
+        # se il name è un FQDN (contiene un punto ma non termina con '.') aggiungi '.'
+        if name != '@' and isinstance(name, str) and '.' in name and not name.endswith('.'):
+            name = name + '.'
+
+        # per tipi che puntano ad un nome (NS, CNAME, PTR) aggiungi il punto anche al valore
+        if isinstance(rtype, str) and rtype.upper() in ('NS', 'CNAME', 'PTR'):
+            if isinstance(value, str) and '.' in value and not value.endswith('.') and not _is_ip(value):
+                value = value + '.'
+
         # usa un campo nome con padding fisso, poi tab per separazione chiara
         name_field = f"{name:<{name_width}}"
         return f"{name_field}\t{cls}\t{rtype}\t{value}"
@@ -2241,7 +2259,7 @@ def main():
                 continue
             break
         print(f"--- Configurazione router {rname} ---")
-        protocols = valida_protocols(f"Protocolli attivi su {rname} (bgp/ospf/rip/statico, separati da spazio/virgola): ")
+        protocols = valida_protocols(f"Protocolli attivi su {rname} (bgp/ospf/rip/statico, separati da virgola): ")
         asn = ""
         if "bgp" in protocols:
             asn = input_non_vuoto("Numero AS BGP: ")
