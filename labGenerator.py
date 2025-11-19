@@ -578,6 +578,16 @@ def crea_router_files(base_path, rname, data):
             area_nets.setdefault(main_area_id, []).extend(nets_main)
             if stub_main:
                 stub_areas.add(main_area_id)
+            # assicurati che le loopback (se presenti) siano allocate nell'area principale
+            if loopbacks:
+                for lb in loopbacks:
+                    try:
+                        lb_net = str(ipaddress.ip_network(lb, strict=False))
+                        if lb_net not in area_nets.setdefault(main_area_id, []):
+                            area_nets[main_area_id].append(lb_net)
+                    except Exception:
+                        # ignora loopback non valide
+                        pass
             # gestisci le altre nuvole: area dedicata (stub) o richiesta interattiva
             extra_areas = data.get('ospf_extra_areas', {}) if isinstance(data.get('ospf_extra_areas', {}), dict) else {}
             for k in sorted(groups.keys()):
@@ -1642,7 +1652,7 @@ def aggiungi_loopback_menu(base_path, routers):
                 insert_lines_into_protocol_block(fpath, proto='ospf', asn=None, lines=[f"network {ipcidr} area {area}"])
             if 'rip' in protos:
                 insert_lines_into_protocol_block(fpath, proto='rip', asn=None, lines=[f"network {ipcidr}"])
-            print(f"✅ Loopback {ipcidr} aggiunta a router {target} (startup aggiornato). I protocolli OSPF/RIP sono stati aggiornati se presenti; BGP non annuncia loopback.")
+            print(f"\n\n✅ Loopback {ipcidr} aggiunta a router {target} (startup aggiornato).")
         else:
             print(f"⚠️ frr.conf non trovato per {target}; è stata aggiornata solo la startup (se esistente).")
         return
@@ -2255,12 +2265,13 @@ def main():
     print("  R - Rigenera XML di un lab esistente")
     print("  G - Genera comando PING per un lab esistente (copia/incolla)")
     print("  A - Assegna un file resolv.conf specifico a un dispositivo")
+    print("  L - Aggiungi loopback a dispositivo in un lab esistente")
     print("  P - Applica Policies BGP")
     print("  Q - Esci\n")
     print("------------------------------------------------------\n")
 
     while True:
-        mode = input_non_vuoto("Seleziona (C/I/R/G/A/P/Q): ").strip().lower()
+        mode = input_non_vuoto("Seleziona (C/I/R/G/L/A/P/Q): ").strip().lower()
         if not mode:
             continue
         if mode.startswith('q'):
@@ -2364,6 +2375,26 @@ def main():
             except Exception as e:
                 print('Errore caricando il lab o aprendo policies:', e)
             # torna al menu principale
+            continue
+        if mode.startswith('l'):
+            target = input_non_vuoto('Percorso della directory del lab su cui aggiungere loopback: ').strip()
+            if not os.path.isdir(target):
+                print(f"Directory non trovata: {target}")
+                continue
+            # prova a caricare XML esistente, altrimenti rigenera metadata
+            xmlpath = os.path.join(target, os.path.basename(os.path.normpath(target)) + '.xml')
+            try:
+                if os.path.exists(xmlpath):
+                    lab_name, routers_meta, _, _, _ = load_lab_from_xml(xmlpath)
+                else:
+                    out = rebuild_lab_metadata_and_export(target)
+                    if not out:
+                        print('Impossibile generare metadata del lab.')
+                        continue
+                    lab_name, routers_meta, _, _, _ = load_lab_from_xml(out)
+                aggiungi_loopback_menu(target, routers_meta)
+            except Exception as e:
+                print('Errore caricando il lab o aprendo il menu aggiungi loopback:', e)
             continue
         print('Scelta non valida, riprova.')
 
@@ -2484,14 +2515,9 @@ def main():
         if "ospf" in protocols:
             rdata['ospf_area'] = ospf_area
             rdata['ospf_area_stub'] = ospf_stub
-        # Loopbacks: chiedi all'utente se vuole aggiungere loopback (/32)
-        lbs = []
-        add_lb = input(f"Vuoi aggiungere loopback a {rname}? (s/N): ").strip().lower()
-        if add_lb.startswith('s'):
-            # chiediamo subito un solo IP (caso tipico: una sola loopback)
-            ip_only = valida_ip_senza_cidr("IP loopback #1 (es. 1.2.3.4): ")
-            lbs.append(ip_only + "/32")
-            rdata['loopbacks'] = lbs
+        # Loopbacks: non vengono richieste durante la creazione interattiva.
+        # Le loopback possono essere aggiunte tramite il menu post-creazione
+        # o tramite l'opzione 'L' nel menu principale.
         routers[rname] = rdata
         crea_router_files(lab_path, rname, routers[rname])
 
