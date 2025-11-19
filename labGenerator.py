@@ -1368,9 +1368,16 @@ def assegna_resolv_conf(base_path):
     2) inserisci il contenuto completo di resolv.conf (termina con una linea '.' da sola)
     3) copia il `resolv.conf` da un altro dispositivo che lo possiede
     """
-    # elenca sottocartelle (dispositivi)
+    # elenca dispositivi: includi sia sottocartelle che eventuali file '<name>.startup'
     try:
-        items = sorted([d for d in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, d)) and not d.startswith('.')])
+        dir_items = [d for d in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, d)) and not d.startswith('.')]
+        # aggiungi file .startup come possibili host/client (rimuovi estensione)
+        startup_files = []
+        for fn in os.listdir(base_path):
+            if fn.endswith('.startup') and os.path.isfile(os.path.join(base_path, fn)):
+                startup_files.append(os.path.splitext(fn)[0])
+        # unisci e deduplica
+        items = sorted(list(dict.fromkeys(dir_items + startup_files)))
     except Exception:
         print('Errore leggendo la cartella del laboratorio.')
         return
@@ -1401,7 +1408,10 @@ def assegna_resolv_conf(base_path):
         print('Selezione non valida.')
         return
 
-    etc_dir = os.path.join(base_path, target, 'etc')
+    # assicurati che la directory del dispositivo esista (per host creati come .startup la creiamo ora)
+    device_dir = os.path.join(base_path, target)
+    os.makedirs(device_dir, exist_ok=True)
+    etc_dir = os.path.join(device_dir, 'etc')
     os.makedirs(etc_dir, exist_ok=True)
     dest_path = os.path.join(etc_dir, 'resolv.conf')
 
@@ -1423,38 +1433,57 @@ def assegna_resolv_conf(base_path):
 
     try:
         if choice == '1':
-            # Cerca un IP (IPv4) all'interno delle cartelle dei dispositivi per presentare
-            # una lista di possibili nameserver: prendiamo il primo IPv4 trovato per dispositivo.
+            # Cerca un IP (IPv4) dentro i file del dispositivo o nello startup file
             import re
             candidate_ns = []
             ip_re = re.compile(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b")
             for d in items:
-                dev_dir = os.path.join(base_path, d)
                 found_ip = None
-                try:
-                    for root, _, files in os.walk(dev_dir):
-                        for fn in files:
-                            fpath = os.path.join(root, fn)
-                            try:
-                                with open(fpath, 'r', encoding='utf-8', errors='ignore') as fh:
-                                    for line in fh:
-                                        m = ip_re.search(line)
-                                        if m:
-                                            cand = m.group(0)
-                                            try:
-                                                ipaddress.ip_address(cand)
-                                                found_ip = cand
-                                                break
-                                            except Exception:
-                                                continue
-                                    if found_ip:
-                                        break
-                            except Exception:
-                                continue
-                        if found_ip:
-                            break
-                except Exception:
-                    pass
+                # se esiste una directory per il dispositivo, cerca dentro tutti i file
+                dev_dir = os.path.join(base_path, d)
+                if os.path.isdir(dev_dir):
+                    try:
+                        for root, _, files in os.walk(dev_dir):
+                            for fn in files:
+                                fpath = os.path.join(root, fn)
+                                try:
+                                    with open(fpath, 'r', encoding='utf-8', errors='ignore') as fh:
+                                        for line in fh:
+                                            m = ip_re.search(line)
+                                            if m:
+                                                cand = m.group(0)
+                                                try:
+                                                    ipaddress.ip_address(cand)
+                                                    found_ip = cand
+                                                    break
+                                                except Exception:
+                                                    continue
+                                        if found_ip:
+                                            break
+                                except Exception:
+                                    continue
+                            if found_ip:
+                                break
+                    except Exception:
+                        pass
+                else:
+                    # potrebbe esistere solo il file '<name>.startup' nel base_path
+                    startup_path = os.path.join(base_path, f"{d}.startup")
+                    if os.path.isfile(startup_path):
+                        try:
+                            with open(startup_path, 'r', encoding='utf-8', errors='ignore') as fh:
+                                for line in fh:
+                                    m = ip_re.search(line)
+                                    if m:
+                                        cand = m.group(0)
+                                        try:
+                                            ipaddress.ip_address(cand)
+                                            found_ip = cand
+                                            break
+                                        except Exception:
+                                            continue
+                        except Exception:
+                            pass
                 if found_ip:
                     candidate_ns.append((d, found_ip))
 
