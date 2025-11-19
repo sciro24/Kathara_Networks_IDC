@@ -1637,8 +1637,31 @@ def aggiungi_loopback_menu(base_path, routers):
         # aggiorna startup
         startup = os.path.join(base_path, f"{target}.startup")
         try:
-            with open(startup, 'a') as f:
-                f.write(f"ip address add {ipcidr} dev lo\n")
+            # legge lo startup (se esiste) e inserisce la loopback prima di
+            # qualsiasi riga 'systemctl start ...' per mantenere l'ordine
+            lines = []
+            if os.path.exists(startup):
+                with open(startup, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+            lb_line = f"ip address add {ipcidr} dev lo\n"
+            # evita duplicati
+            if any(l.strip() == lb_line.strip() for l in lines):
+                pass
+            else:
+                insert_idx = None
+                for i, l in enumerate(lines):
+                    if re.match(r'^\s*systemctl start\b', l):
+                        insert_idx = i
+                        break
+                if insert_idx is None:
+                    # appendare alla fine
+                    if lines and not lines[-1].endswith('\n'):
+                        lines[-1] = lines[-1] + '\n'
+                    lines.append(lb_line)
+                else:
+                    lines.insert(insert_idx, lb_line)
+                with open(startup, 'w', encoding='utf-8') as f:
+                    f.writelines(lines)
         except Exception:
             print('⚠️ Impossibile aggiornare lo startup del router (file non trovato).')
         # aggiorna frr.conf: inserisci network nelle sezioni dei protocolli abilitati
@@ -1688,9 +1711,28 @@ def aggiungi_loopback_menu(base_path, routers):
     ipcidr = ip_only + '/32'
     startup = os.path.join(base_path, f"{target}.startup")
     try:
-        with open(startup, 'a') as f:
-            f.write(f"ip address add {ipcidr} dev lo\n")
-        print(f"✅ Loopback {ipcidr} aggiunta a {target} (startup).")
+        lines = []
+        if os.path.exists(startup):
+            with open(startup, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+        lb_line = f"ip address add {ipcidr} dev lo\n"
+        if any(l.strip() == lb_line.strip() for l in lines):
+            print(f'⚠️ Loopback {ipcidr} già presente nello startup di {target}.')
+        else:
+            insert_idx = None
+            for i, l in enumerate(lines):
+                if re.match(r'^\s*systemctl start\b', l):
+                    insert_idx = i
+                    break
+            if insert_idx is None:
+                if lines and not lines[-1].endswith('\n'):
+                    lines[-1] = lines[-1] + '\n'
+                lines.append(lb_line)
+            else:
+                lines.insert(insert_idx, lb_line)
+            with open(startup, 'w', encoding='utf-8') as f:
+                f.writelines(lines)
+            print(f"✅ Loopback {ipcidr} aggiunta a {target} (startup).")
     except Exception as e:
         print('Errore aggiornando lo startup:', e)
 
