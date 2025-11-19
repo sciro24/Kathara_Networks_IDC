@@ -525,23 +525,23 @@ def crea_router_files(base_path, rname, data):
             "debug bgp updates out\n"
         )
 
-    iface_ips = [iface["ip"] for iface in data["interfaces"]]
-    # includi eventuali loopback nelle reti collegate in modo che vengano
-    # annunciate dai protocolli (BGP/OSPF/RIP) se presenti
+    phys_iface_ips = [iface["ip"] for iface in data["interfaces"]]
+    # loopbacks separate: le aggiungiamo solo per OSPF/RIP e per lo startup,
+    # ma non per BGP
     loopbacks = data.get('loopbacks') or []
-    if loopbacks:
-        iface_ips.extend(loopbacks)
-    # determiniamo le reti originali (una per interfaccia) per BGP
+    # combined (interfacce fisiche + loopbacks) per OSPF/RIP/aggregazioni
+    combined_ips = phys_iface_ips + loopbacks
+    # determiniamo le reti originali (una per interfaccia fisica) per BGP
     original_nets = []
-    for ip_cidr in iface_ips:
+    for ip_cidr in phys_iface_ips:
         try:
             n = ipaddress.ip_network(ip_cidr, strict=False)
             original_nets.append(str(n))
         except Exception:
             continue
 
-    # collapsed networks (fallback per OSPF/BGP quando necessario)
-    aggregated_nets = collapse_interface_networks(iface_ips)
+    # collapsed networks (fallback per OSPF/RIP quando necessario)
+    aggregated_nets = collapse_interface_networks(combined_ips)
 
     # Non creiamo più automaticamente direttive `redistribute`.
     # BGP: annuncia tutte le network collegate senza accorciarle (mantieni prefissi originali)
@@ -552,15 +552,15 @@ def crea_router_files(base_path, rname, data):
         area_main = data.get('ospf_area')
         stub_main = bool(data.get('ospf_area_stub'))
         # Raggruppiamo le interfacce per "nuvole" (primo ottetto)
-        groups = group_by_first_octet(iface_ips)
+        groups = group_by_first_octet(combined_ips)
         if not groups:
             # fallback: come prima
-            chosen = choose_allowed_byte_aligned_supernet(iface_ips)
+            chosen = choose_allowed_byte_aligned_supernet(combined_ips)
             nets_for_ospf = [chosen] if chosen else aggregated_nets
             parts.append(mk_ospf_stanza(nets_for_ospf, area=area_main, stub=stub_main))
         elif len(groups) == 1:
             # unica nuvola: comportamento normale
-            chosen = choose_allowed_byte_aligned_supernet(iface_ips)
+            chosen = choose_allowed_byte_aligned_supernet(combined_ips)
             nets_for_ospf = [chosen] if chosen else aggregated_nets
             parts.append(mk_ospf_stanza(nets_for_ospf, area=area_main, stub=stub_main))
         else:
@@ -568,7 +568,7 @@ def crea_router_files(base_path, rname, data):
             main_key = max(groups.keys(), key=lambda k: len(groups[k]))
             # networks for main group
             main_ips = groups[main_key]
-            chosen_main = choose_allowed_byte_aligned_supernet(main_ips)
+            chosen_main = choose_allowed_byte_aligned_supernet(main_ips + (loopbacks or []))
             nets_main = [chosen_main] if chosen_main else collapse_interface_networks(main_ips)
             # build mapping area -> nets and set of stub areas
             area_nets = {}
@@ -603,7 +603,8 @@ def crea_router_files(base_path, rname, data):
                         a_id = '1.1.1.1'
                         a_stub = True
                 group_ips = groups[k]
-                chosen_g = choose_allowed_byte_aligned_supernet(group_ips)
+                # per ogni gruppo valutiamo anche loopbacks (se appartengono alla stessa "nuvola")
+                chosen_g = choose_allowed_byte_aligned_supernet(group_ips + (loopbacks or []))
                 nets_g = [chosen_g] if chosen_g else collapse_interface_networks(group_ips)
                 area_nets.setdefault(a_id, []).extend(nets_g)
                 if a_stub:
@@ -611,8 +612,10 @@ def crea_router_files(base_path, rname, data):
             # finally append a single multi-area ospf block
             parts.append(format_ospf_multi_area(area_nets, stub_areas))
     # RIP: accorcia le reti alla network byte-aligned (/8,/16,/24) che copra tutte le LAN collegate
+    # Per RIP/OSPF vogliamo considerare anche le loopback se presenti (possono
+    # essere rilevanti per simulazioni), quindi usiamo `combined_ips`.
     if "rip" in data["protocols"]:
-        rip_net = choose_allowed_byte_aligned_supernet(iface_ips)
+        rip_net = choose_allowed_byte_aligned_supernet(combined_ips)
         if rip_net:
             parts.append(mk_rip_stanza([rip_net]))
         else:
@@ -1632,14 +1635,14 @@ def aggiungi_loopback_menu(base_path, routers):
         fpath = os.path.join(base_path, target, 'etc', 'frr', 'frr.conf')
         if os.path.exists(fpath):
             protos = routers.get(target, {}).get('protocols', [])
-            if 'bgp' in protos:
-                insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=[f"network {ipcidr}"])
+            # IMPORTANT: non annunciare mai la loopback in BGP
+            # (anche se il router ha BGP abilitato non tocchiamo il blocco bgp)
             if 'ospf' in protos:
                 area = routers.get(target, {}).get('ospf_area') or input('Area OSPF per annuncio della loopback (es. 0.0.0.0): ').strip() or '0.0.0.0'
                 insert_lines_into_protocol_block(fpath, proto='ospf', asn=None, lines=[f"network {ipcidr} area {area}"])
             if 'rip' in protos:
                 insert_lines_into_protocol_block(fpath, proto='rip', asn=None, lines=[f"network {ipcidr}"])
-            print(f"✅ Loopback {ipcidr} aggiunta a router {target} (startup e annunci nei protocolli, se presenti).")
+            print(f"✅ Loopback {ipcidr} aggiunta a router {target} (startup aggiornato). I protocolli OSPF/RIP sono stati aggiornati se presenti; BGP non annuncia loopback.")
         else:
             print(f"⚠️ frr.conf non trovato per {target}; è stata aggiornata solo la startup (se esistente).")
         return
@@ -2485,10 +2488,9 @@ def main():
         lbs = []
         add_lb = input(f"Vuoi aggiungere loopback a {rname}? (s/N): ").strip().lower()
         if add_lb.startswith('s'):
-            n_lb = input_int("Numero di loopback da aggiungere: ", 1)
-            for li in range(n_lb):
-                ip_only = valida_ip_senza_cidr(f"  IP loopback #{li+1} (es. 1.2.3.4): ")
-                lbs.append(ip_only + "/32")
+            # chiediamo subito un solo IP (caso tipico: una sola loopback)
+            ip_only = valida_ip_senza_cidr("IP loopback #1 (es. 1.2.3.4): ")
+            lbs.append(ip_only + "/32")
             rdata['loopbacks'] = lbs
         routers[rname] = rdata
         crea_router_files(lab_path, rname, routers[rname])
