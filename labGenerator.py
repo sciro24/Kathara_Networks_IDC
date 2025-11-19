@@ -457,6 +457,9 @@ def crea_router_files(base_path, rname, data):
     only_static = ('statico' in protos) and all(p == 'statico' for p in protos)
     if only_static:
         ip_cfg_lines = [f"ip address add {iface['ip']} dev {iface.get('name','eth0')}" for iface in data.get('interfaces', [])]
+        # loopbacks (se presenti) vanno aggiunte allo startup come interfacce lo
+        for lb in (data.get('loopbacks') or []):
+            ip_cfg_lines.append(f"ip address add {lb} dev lo")
         # static_routes può essere una lista di stringhe o dict.
         # Esempio dict: {"network":"30.0.0.0/24","via":"10.0.0.13","dev":"eth0"}
         static_routes = data.get('static_routes', []) or []
@@ -523,6 +526,11 @@ def crea_router_files(base_path, rname, data):
         )
 
     iface_ips = [iface["ip"] for iface in data["interfaces"]]
+    # includi eventuali loopback nelle reti collegate in modo che vengano
+    # annunciate dai protocolli (BGP/OSPF/RIP) se presenti
+    loopbacks = data.get('loopbacks') or []
+    if loopbacks:
+        iface_ips.extend(loopbacks)
     # determiniamo le reti originali (una per interfaccia) per BGP
     original_nets = []
     for ip_cidr in iface_ips:
@@ -614,6 +622,9 @@ def crea_router_files(base_path, rname, data):
         f.write("\n".join(parts))
 
     ip_cfg_lines = [f"ip address add {iface['ip']} dev {iface['name']}" for iface in data["interfaces"]]
+    # aggiungi le loopback allo startup
+    for lb in loopbacks:
+        ip_cfg_lines.append(f"ip address add {lb} dev lo")
     startup_path = os.path.join(base_path, f"{rname}.startup")
     with open(startup_path, "w") as f:
         f.write(STARTUP_ROUTER_TMPL.format(ip_config="\n".join(ip_cfg_lines)))
@@ -1588,6 +1599,90 @@ def assegna_resolv_conf(base_path):
         print('Errore durante l\'impostazione di resolv.conf:', e)
 
 
+def aggiungi_loopback_menu(base_path, routers):
+    """
+    Aggiunge una loopback ad un dispositivo.
+    - Per i router: aggiorna lo startup (`<name>.startup`) con `ip address add <ip/32> dev lo`
+      e inserisce l'annuncio nei blocchi BGP/OSPF/RIP se il protocollo è abilitato.
+    - Per altri dispositivi con file `.startup`: aggiunge solo la riga allo startup.
+    """
+    print('\n--- Aggiungi loopback ad un dispositivo ---')
+    typ = input("Vuoi aggiungere la loopback a un Router (R) o ad un altro dispositivo (D)? (R/D): ").strip().lower()
+    if typ.startswith('r'):
+        target = select_router(routers, prompt='Seleziona il router a cui aggiungere la loopback:')
+        if not target:
+            print('Operazione annullata.')
+            return
+        ip_only = valida_ip_senza_cidr('IP loopback (es. 1.2.3.4): ')
+        ipcidr = ip_only + '/32'
+        # memorizza nel metadata
+        routers.setdefault(target, {}).setdefault('loopbacks', [])
+        if ipcidr in routers[target]['loopbacks']:
+            print('⚠️ Loopback già presente nei dati del router.')
+        else:
+            routers[target]['loopbacks'].append(ipcidr)
+        # aggiorna startup
+        startup = os.path.join(base_path, f"{target}.startup")
+        try:
+            with open(startup, 'a') as f:
+                f.write(f"ip address add {ipcidr} dev lo\n")
+        except Exception:
+            print('⚠️ Impossibile aggiornare lo startup del router (file non trovato).')
+        # aggiorna frr.conf: inserisci network nelle sezioni dei protocolli abilitati
+        fpath = os.path.join(base_path, target, 'etc', 'frr', 'frr.conf')
+        if os.path.exists(fpath):
+            protos = routers.get(target, {}).get('protocols', [])
+            if 'bgp' in protos:
+                insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=[f"network {ipcidr}"])
+            if 'ospf' in protos:
+                area = routers.get(target, {}).get('ospf_area') or input('Area OSPF per annuncio della loopback (es. 0.0.0.0): ').strip() or '0.0.0.0'
+                insert_lines_into_protocol_block(fpath, proto='ospf', asn=None, lines=[f"network {ipcidr} area {area}"])
+            if 'rip' in protos:
+                insert_lines_into_protocol_block(fpath, proto='rip', asn=None, lines=[f"network {ipcidr}"])
+            print(f"✅ Loopback {ipcidr} aggiunta a router {target} (startup e annunci nei protocolli, se presenti).")
+        else:
+            print(f"⚠️ frr.conf non trovato per {target}; è stata aggiornata solo la startup (se esistente).")
+        return
+
+    # Dispositivi generici: cerca file .startup nella cartella del lab
+    items = []
+    try:
+        for fn in os.listdir(base_path):
+            if fn.endswith('.startup'):
+                items.append(fn[:-8])
+    except Exception:
+        pass
+    if not items:
+        print('Nessun dispositivo con file .startup trovato nella cartella del lab.')
+        return
+    print_menu('Dispositivi con startup:', items)
+    sel = input('Seleziona il dispositivo (numero o nome, vuoto per annullare): ').strip()
+    if not sel:
+        print('Annullato.')
+        return
+    target = None
+    if sel.isdigit():
+        idx = int(sel) - 1
+        if 0 <= idx < len(items):
+            target = items[idx]
+    else:
+        if sel in items:
+            target = sel
+    if not target:
+        print('Selezione non valida.')
+        return
+    ip_only = valida_ip_senza_cidr('IP loopback (es. 1.2.3.4): ')
+    ipcidr = ip_only + '/32'
+    startup = os.path.join(base_path, f"{target}.startup")
+    try:
+        with open(startup, 'a') as f:
+            f.write(f"ip address add {ipcidr} dev lo\n")
+        print(f"✅ Loopback {ipcidr} aggiunta a {target} (startup).")
+    except Exception as e:
+        print('Errore aggiornando lo startup:', e)
+
+
+
 def menu_post_creazione(base_path, routers):
     while True:
         items = [
@@ -1595,7 +1690,8 @@ def menu_post_creazione(base_path, routers):
             'Rigenera file XML del laboratorio (da file modificati)',
             'Genera comando ping per tutti gli indirizzi del lab (copia/incolla)',
             'Policies (prefix-list / route-map semplificate per BGP)',
-            'Assegna un file resolv.conf specifico a un dispositivo'
+            'Assegna un file resolv.conf specifico a un dispositivo',
+            "Aggiungi loopback a un dispositivo"
         ]
         print_menu('-------------- Menu post-creazione --------------', items, extra_options=[('0', 'Termina Programma')])
         # footer: mostrato in basso per identificazione dell'autore
@@ -1635,6 +1731,8 @@ def menu_post_creazione(base_path, routers):
             policies_menu(base_path, routers)
         elif choice == '5':
             assegna_resolv_conf(base_path)
+        elif choice == '6':
+            aggiungi_loopback_menu(base_path, routers)
         else:
             print('Scelta non valida, riprova.')
 
@@ -2383,6 +2481,15 @@ def main():
         if "ospf" in protocols:
             rdata['ospf_area'] = ospf_area
             rdata['ospf_area_stub'] = ospf_stub
+        # Loopbacks: chiedi all'utente se vuole aggiungere loopback (/32)
+        lbs = []
+        add_lb = input(f"Vuoi aggiungere loopback a {rname}? (s/N): ").strip().lower()
+        if add_lb.startswith('s'):
+            n_lb = input_int("Numero di loopback da aggiungere: ", 1)
+            for li in range(n_lb):
+                ip_only = valida_ip_senza_cidr(f"  IP loopback #{li+1} (es. 1.2.3.4): ")
+                lbs.append(ip_only + "/32")
+            rdata['loopbacks'] = lbs
         routers[rname] = rdata
         crea_router_files(lab_path, rname, routers[rname])
 
