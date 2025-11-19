@@ -2454,7 +2454,7 @@ def main():
         return
 
     # Modalità interattiva: chiedi all'utente se creare o importare
-    print("\n\n----- Benvenuto nel Katharà Lab Generator 2025 -----\n")
+    print("\n\n----- Katharà Lab Generator 2025 (Github: sciro24) -----\n")
     print("Scegli una modalità:\n")
     print("  C - Crea nuovo laboratorio (interattivo)")
     print("  I - Importa da file (XML/JSON)")
@@ -2464,10 +2464,10 @@ def main():
     print("  L - Aggiungi loopback a dispositivo in un lab esistente")
     print("  P - Applica Policies BGP")
     print("  Q - Esci\n")
-    print("------------------------------------------------------\n")
+    print("--------------------------------------------------------\n")
 
     while True:
-        mode = input_non_vuoto("Seleziona (C/I/R/G/L/A/P/Q): ").strip().lower()
+        mode = input_non_vuoto("Digita un'opzione (C/I/R/G/A/L/P/Q): ").strip().lower()
         if not mode:
             continue
         if mode.startswith('q'):
