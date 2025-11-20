@@ -173,6 +173,6 @@ Q - Esci
 ---
 
 ### 🏫 Author
-**Diego** – Computer Engineering student at *Roma Tre University*  
+**Diego Scirocco** – Computer Engineering student at *Roma Tre University*  
 *Born from an idea by Rainer Cabral Ilao*
 
