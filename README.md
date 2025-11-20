@@ -90,65 +90,71 @@ The exercises cover multi-protocol routing setup, inter-domain and intra-domain 
 
 # LabGenerator
 
-## 📋 Descrizione
+## 📋 Description
 
-`labGenerator.py` è uno strumento Python interattivo progettato per automatizzare la creazione di laboratori Kathara per l'emulazione di reti complesse. Il tool semplifica notevolmente il processo di configurazione di router, host, server web e server DNS, generando automaticamente tutti i file di configurazione necessari per i protocolli di routing (BGP, OSPF, RIP) tramite FRRouting (FRR).
+`labGenerator.py` is an interactive Python tool designed to automate the creation of **Kathara labs** for complex network emulation. The tool significantly simplifies the process of configuring routers, hosts, web servers, and DNS servers, automatically generating all the necessary configuration files for routing protocols (**BGP, OSPF, RIP**) using **FRRouting (FRR)**.
 
-## ✨ Funzionalità Principali
+---
 
-### 🔧 Modalità di Funzionamento
+## ✨ Key Features
 
-Il generatore supporta diverse modalità operative:
+### 🔧 Operating Modes
 
-1. **Creazione Interattiva** - Crea un nuovo laboratorio passo-passo con assistenza guidata
-2. **Importazione da File** - Importa configurazioni esistenti da file XML/JSON
-3. **Rigenerazione XML** - Ricostruisce il file XML di metadati da un lab esistente
-4. **Generazione Comandi PING** - Crea automaticamente comandi ping per testare la connettività tra tutti i dispositivi
-5. **Configurazione DNS** - Assegna file `resolv.conf` personalizzati ai dispositivi
-6. **Gestione Loopback** - Aggiunge interfacce loopback a dispositivi esistenti
-7. **Policy BGP** - Applica policy BGP avanzate (access-list, prefix-list, route-map, customer-provider)
+The generator supports various operating modes:
 
-### 📦 Componenti Supportati
+1.  **Interactive Creation** - Creates a new lab step-by-step with guided assistance.
+2.  **File Import** - Imports existing configurations from XML/JSON files.
+3.  **XML Regeneration** - Rebuilds the metadata XML file from an existing lab.
+4.  **PING Command Generation** - Automatically creates ping commands to test connectivity between all devices.
+5.  **DNS Configuration** - Assigns customized `resolv.conf` files to devices.
+6.  **Loopback Management** - Adds loopback interfaces to existing devices.
+7.  **BGP Policy** - Applies advanced BGP policies (**access-list, prefix-list, route-map, customer-provider**).
 
-- **Router FRR**: Configurazione automatica di router con supporto per:
-  - BGP (Border Gateway Protocol)
-  - OSPF (Open Shortest Path First) - single-area e multi-area
-  - RIP (Routing Information Protocol)
-  - Routing statico
-  - Aggregazione automatica delle reti
-  - Policy BGP avanzate
-  
-- **Host**: Dispositivi endpoint con configurazione IP e gateway
-  - Supporto interfacce multiple
-  - Route statiche personalizzabili
+### 📦 Supported Components
 
-- **Server WWW**: Server Apache con pagine HTML personalizzate
-  - Generazione automatica di `index.html`
-  - Configurazione IP e routing
+* **FRR Router**: Automatic configuration with support for:
+    * **BGP** (Border Gateway Protocol)
+    * **OSPF** (Open Shortest Path First) - single-area and multi-area
+    * **RIP** (Routing Information Protocol)
+    * Static Routing
+    * Automatic network aggregation
+    * Advanced BGP policies
 
-- **Server DNS (BIND9)**: Server DNS con supporto completo
-  - Root server o recursive resolver
-  - Zone authoritative personalizzate
-  - Forwarders configurabili
-  - Record A, NS, CNAME, PTR
+* **Host**: Endpoint devices with IP and gateway configuration:
+    * Multiple interface support
+    * Customizable static routes
 
-## 🚀 Uso del Tool
+* **WWW Server**: Apache server with custom HTML pages:
+    * Automatic `index.html` generation
+    * IP and routing configuration
 
-### Prerequisiti
+* **DNS Server (BIND9)**: Full-featured DNS server support:
+    * Root server or recursive resolver
+    * Custom authoritative zones
+    * Configurable forwarders
+    * A, NS, CNAME, PTR records
 
-- Python 3.x
-- Kathara installato
-- Docker installato
+---
 
-### Avvio
+## 🚀 Tool Usage
+
+### Prerequisites
+
+* Python 3.x
+* Kathara installed
+* Docker installed
+
+### Run
+
+To start the tool, run the following command in your terminal:
 
 ```bash
 python3 labGenerator.py
-```
 
-### Menu Principale
 
-Quando si avvia in modalità interattiva, il tool presenta le seguenti opzioni:
+### Main Menu
+
+When launched in interactive mode, the tool presents the following options:
 
 ```
 C - Crea nuovo laboratorio (interattivo)
