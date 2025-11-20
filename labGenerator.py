@@ -1125,27 +1125,37 @@ def insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=None):
     try:
         with open(fpath, 'r') as f:
             content = f.readlines()
-    except Exception:
+    except Exception as e:
+        print(f"❌ Errore leggendo {fpath}: {e}")
         return False
 
-    # trova la prima occorrenza di 'router <proto>' (linea che comincia con 'router proto')
+    # trova la prima occorrenza di 'router <proto>' (case insensitive per 'router')
     idx = None
+    target_start = f'router {proto}'.lower()
     for i, L in enumerate(content):
-        s = L.strip()
-        if s.startswith('router ' + proto):
-            # se viene passato un asn, verifichiamo che la linea lo contenga
-            if asn and str(asn) not in s:
+        s = L.strip().lower()
+        if s.startswith(target_start):
+            # se viene passato un asn, verifichiamo che la linea lo contenga (case insensitive check on line)
+            if asn and str(asn) not in L:
                 continue
             idx = i
             break
 
     if idx is None:
         # non trovato: append a fine file
-        with open(fpath, 'a') as f:
-            f.write('\n')
-            for l in lines:
-                f.write(l + '\n')
-        return True
+        try:
+            with open(fpath, 'a') as f:
+                # Assicurati che ci sia una newline prima se il file non è vuoto e non finisce con newline
+                if os.path.getsize(fpath) > 0:
+                    # Leggi l'ultimo carattere per vedere se serve newline (costoso aprire in r+ o seek, 
+                    # ma per sicurezza scriviamo sempre una newline iniziale se appendiamo)
+                    f.write('\n')
+                for l in lines:
+                    f.write(l + '\n')
+            return True
+        except Exception as e:
+            print(f"❌ Errore scrivendo (append) su {fpath}: {e}")
+            return False
 
     # trova il punto di inserimento: il primo indice dopo il blocco indentato
     j = idx + 1
@@ -1163,11 +1173,21 @@ def insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=None):
 
     # prepara le righe indentate
     ind_lines = [('    ' + l) for l in lines]
+    
+    # Assicurati che la riga precedente abbia un newline
+    if j > 0 and not content[j-1].endswith('\n'):
+        content[j-1] += '\n'
+
     # inserisci prima dell'indice j
     new_content = content[:j] + [l + '\n' for l in ind_lines] + content[j:]
-    with open(fpath, 'w') as f:
-        f.writelines(new_content)
-    return True
+    
+    try:
+        with open(fpath, 'w') as f:
+            f.writelines(new_content)
+        return True
+    except Exception as e:
+        print(f"❌ Errore scrivendo su {fpath}: {e}")
+        return False
 
 def select_router(routers, prompt="Seleziona router:"):
     keys = list(routers.keys())
@@ -1953,26 +1973,51 @@ def aggiungi_customer_provider_wizard(base_path, routers):
     # 2. Seleziona Neighbor
     print(f"\nSeleziona il Neighbor (vicino) di {target}:")
     neigh_name = select_router(routers, prompt="Router vicino:")
+    
+    neigh_ip = None
+    neigh_asn = None
+
     if not neigh_name:
-        # Fallback manuale se il vicino non è nella lista (es. esterno)
+        # Fallback manuale
         neigh_name = input("Nome del vicino (o invio per uscire): ").strip()
         if not neigh_name:
             return
-        neigh_ip = input_non_vuoto("IP del vicino: ")
+        neigh_ip = valida_ip_senza_cidr("Inserisci IP del vicino: ")
         neigh_asn = input_non_vuoto("ASN del vicino: ")
     else:
-        # Cerca IP interfaccia verso il target (euristica o manuale)
-        # Per semplicità chiediamo l'IP se non riusciamo a dedurlo facilmente, 
-        # ma proviamo a vedere se c'è una LAN condivisa.
-        # Qui per sicurezza chiediamo l'IP, o lo proponiamo.
-        neigh_ip = get_first_iface_ip(routers[neigh_name]['interfaces'])
-        print(f"IP rilevato per {neigh_name}: {neigh_ip}")
-        confirm = input(f"Confermi IP {neigh_ip}? (s/n/nuovo IP): ").strip().lower()
-        if confirm != 's':
-             neigh_ip = valida_ip_senza_cidr("Inserisci IP del vicino: ")
+        # Neighbor conosciuto: recuperiamo gli IP
         neigh_asn = routers[neigh_name].get('asn')
-
-    neigh_ip = neigh_ip.split('/')[0]
+        ifaces = routers[neigh_name].get('interfaces', [])
+        valid_ips = []
+        for iface in ifaces:
+            ip_cidr = iface.get('ip')
+            if ip_cidr:
+                ip = ip_cidr.split('/')[0]
+                valid_ips.append(ip)
+        
+        if not valid_ips:
+            print(f"⚠️ Nessun IP trovato per {neigh_name}.")
+            neigh_ip = valida_ip_senza_cidr("Inserisci IP del vicino manualmente: ")
+        elif len(valid_ips) == 1:
+            neigh_ip = valid_ips[0]
+            print(f"✅ IP rilevato per {neigh_name}: {neigh_ip}")
+        else:
+            print(f"\nIl router {neigh_name} ha più indirizzi IP. Seleziona quello verso {target}:")
+            print_menu("IP Disponibili:", valid_ips)
+            while True:
+                sel = input("Seleziona numero (o premi invio per il primo): ").strip()
+                if not sel:
+                    neigh_ip = valid_ips[0]
+                    break
+                if sel.isdigit():
+                    idx = int(sel) - 1
+                    if 0 <= idx < len(valid_ips):
+                        neigh_ip = valid_ips[idx]
+                        break
+                print("Selezione non valida.")
+    
+    if not neigh_ip:
+        return
 
     # Assicurati che il neighbor esista nella conf BGP
     fpath = os.path.join(base_path, target, "etc", "frr", "frr.conf")
@@ -1980,10 +2025,7 @@ def aggiungi_customer_provider_wizard(base_path, routers):
         print(f"File {fpath} non trovato.")
         return
 
-    # Check/Create neighbor
-    # Usiamo una funzione helper locale o quella esistente modificata per accettare ASN
-    # ensure_neighbor_exists chiede ASN interattivamente se manca, ma noi lo abbiamo.
-    # Facciamo check manuale qui per semplicità.
+    # Check/Create neighbor (remote-as)
     with open(fpath, 'r') as f:
         content = f.read()
     
@@ -1991,7 +2033,9 @@ def aggiungi_customer_provider_wizard(base_path, routers):
         print(f"Neighbor {neigh_ip} non presente. Lo aggiungo.")
         lines = [f"neighbor {neigh_ip} remote-as {neigh_asn}",
                  f"neighbor {neigh_ip} description {neigh_name}"]
-        insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=lines)
+        if not insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=lines):
+            print("❌ Errore nell'inserimento del neighbor.")
+            return
     
     # 3. Relazione Economica
     print("\nQual è la relazione economica?")
@@ -2011,7 +2055,7 @@ def aggiungi_customer_provider_wizard(base_path, routers):
         return
 
     # 4. Reti coinvolte (Opzionale)
-    # Usiamo nomi univoci per le prefix-list per evitare conflitti: {rel}_{neigh_name}_in/out
+    # Usiamo nomi univoci per le prefix-list
     pl_in = f"{rel_type}_{neigh_name}_in"
     pl_out = f"{rel_type}_{neigh_name}_out"
 
@@ -2051,9 +2095,7 @@ def aggiungi_customer_provider_wizard(base_path, routers):
             for net in peer_nets.replace(',', ' ').split():
                 lines_to_append.append(f"ip prefix-list {pl_in} permit {net}")
         else:
-             # Fallback se l'utente non mette nulla? Meglio deny all implicito o permit any?
-             # La richiesta dice: "Definisci ip prefix-list peerIn permit <RETE_DEL_PEER>"
-             # Se vuoto, la prefix list sarà vuota -> deny all implicito.
+             # Se vuoto, deny all implicito (nessuna regola permit)
              pass
 
         print("Inserisci le TUE reti da annunciare al peer (separate da virgola):")
@@ -2069,19 +2111,24 @@ def aggiungi_customer_provider_wizard(base_path, routers):
                 lines_to_append.append(f"ip prefix-list {pl_out} permit {net}")
 
     # Scrivi le prefix-list nel file (append global)
-    with open(fpath, 'a') as f:
-        f.write('\n')
-        for l in lines_to_append:
-            f.write(l + '\n')
+    try:
+        with open(fpath, 'a') as f:
+            f.write('\n')
+            for l in lines_to_append:
+                f.write(l + '\n')
+    except Exception as e:
+        print(f"❌ Errore scrivendo le prefix-list: {e}")
+        return
     
     # Collega le prefix-list al neighbor
     neigh_lines = [
         f"neighbor {neigh_ip} prefix-list {pl_in} in",
         f"neighbor {neigh_ip} prefix-list {pl_out} out"
     ]
-    insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=neigh_lines)
-
-    print(f"✅ Configurazione {rel_type.upper()} applicata su {target} verso {neigh_name}.")
+    if insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=neigh_lines):
+        print(f"✅ Configurazione {rel_type.upper()} applicata su {target} verso {neigh_name}.")
+    else:
+        print(f"❌ Errore applicando la configurazione neighbor su {target}.")
 
 
 def menu_post_creazione(base_path, routers):
