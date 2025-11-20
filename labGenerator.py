@@ -1937,6 +1937,153 @@ def aggiungi_loopback_menu(base_path, routers):
 
 
 
+
+def aggiungi_customer_provider_wizard(base_path, routers):
+    print("\n=== Configurazione Customer-Provider ===")
+    
+    # 1. Seleziona Router
+    target = select_router(routers, prompt="Quale router stiamo configurando? ")
+    if not target:
+        return
+
+    if "bgp" not in routers.get(target, {}).get("protocols", []):
+        print(f"⚠️ Il router {target} non ha BGP abilitato.")
+        return
+
+    # 2. Seleziona Neighbor
+    print(f"\nSeleziona il Neighbor (vicino) di {target}:")
+    neigh_name = select_router(routers, prompt="Router vicino:")
+    if not neigh_name:
+        # Fallback manuale se il vicino non è nella lista (es. esterno)
+        neigh_name = input("Nome del vicino (o invio per uscire): ").strip()
+        if not neigh_name:
+            return
+        neigh_ip = input_non_vuoto("IP del vicino: ")
+        neigh_asn = input_non_vuoto("ASN del vicino: ")
+    else:
+        # Cerca IP interfaccia verso il target (euristica o manuale)
+        # Per semplicità chiediamo l'IP se non riusciamo a dedurlo facilmente, 
+        # ma proviamo a vedere se c'è una LAN condivisa.
+        # Qui per sicurezza chiediamo l'IP, o lo proponiamo.
+        neigh_ip = get_first_iface_ip(routers[neigh_name]['interfaces'])
+        print(f"IP rilevato per {neigh_name}: {neigh_ip}")
+        confirm = input(f"Confermi IP {neigh_ip}? (s/n/nuovo IP): ").strip().lower()
+        if confirm != 's':
+             neigh_ip = valida_ip_senza_cidr("Inserisci IP del vicino: ")
+        neigh_asn = routers[neigh_name].get('asn')
+
+    neigh_ip = neigh_ip.split('/')[0]
+
+    # Assicurati che il neighbor esista nella conf BGP
+    fpath = os.path.join(base_path, target, "etc", "frr", "frr.conf")
+    if not os.path.exists(fpath):
+        print(f"File {fpath} non trovato.")
+        return
+
+    # Check/Create neighbor
+    # Usiamo una funzione helper locale o quella esistente modificata per accettare ASN
+    # ensure_neighbor_exists chiede ASN interattivamente se manca, ma noi lo abbiamo.
+    # Facciamo check manuale qui per semplicità.
+    with open(fpath, 'r') as f:
+        content = f.read()
+    
+    if f"neighbor {neigh_ip} remote-as" not in content:
+        print(f"Neighbor {neigh_ip} non presente. Lo aggiungo.")
+        lines = [f"neighbor {neigh_ip} remote-as {neigh_asn}",
+                 f"neighbor {neigh_ip} description {neigh_name}"]
+        insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=lines)
+    
+    # 3. Relazione Economica
+    print("\nQual è la relazione economica?")
+    print("1) PROVIDER (Il vicino è il mio provider)")
+    print("2) CUSTOMER (Il vicino è il mio cliente)")
+    print("3) PEER (Siamo alla pari)")
+    rel_choice = input("Scelta (1-3): ").strip()
+    
+    if rel_choice == '1':
+        rel_type = "provider"
+    elif rel_choice == '2':
+        rel_type = "customer"
+    elif rel_choice == '3':
+        rel_type = "peer"
+    else:
+        print("Scelta non valida.")
+        return
+
+    # 4. Reti coinvolte (Opzionale)
+    # Usiamo nomi univoci per le prefix-list per evitare conflitti: {rel}_{neigh_name}_in/out
+    pl_in = f"{rel_type}_{neigh_name}_in"
+    pl_out = f"{rel_type}_{neigh_name}_out"
+
+    lines_to_append = []
+    lines_to_append.append(f"!")
+    lines_to_append.append(f"! Policy per relazione {rel_type.upper()} con {neigh_name}")
+    lines_to_append.append(f"!")
+
+    if rel_type == "provider":
+        # Provider:
+        # IN: permit any
+        # OUT: deny <RETI_PEER>, permit any
+        lines_to_append.append(f"ip prefix-list {pl_in} permit any")
+        
+        print("Inserisci le reti dei PEER da bloccare verso il provider (separate da virgola, o invio per nessuna):")
+        peers_nets = input("> ").strip()
+        if peers_nets:
+            for net in peers_nets.replace(',', ' ').split():
+                lines_to_append.append(f"ip prefix-list {pl_out} deny {net}")
+        
+        lines_to_append.append(f"ip prefix-list {pl_out} permit any")
+
+    elif rel_type == "customer":
+        # Customer:
+        # IN: permit any
+        # OUT: permit any (Full Table)
+        lines_to_append.append(f"ip prefix-list {pl_in} permit any")
+        lines_to_append.append(f"ip prefix-list {pl_out} permit any")
+
+    elif rel_type == "peer":
+        # Peer:
+        # IN: permit <RETE_DEL_PEER>
+        # OUT: permit <MIE_RETI>, permit <RETI_MIEI_CLIENTI>
+        print(f"Inserisci le reti del PEER {neigh_name} da accettare (separate da virgola):")
+        peer_nets = input("> ").strip()
+        if peer_nets:
+            for net in peer_nets.replace(',', ' ').split():
+                lines_to_append.append(f"ip prefix-list {pl_in} permit {net}")
+        else:
+             # Fallback se l'utente non mette nulla? Meglio deny all implicito o permit any?
+             # La richiesta dice: "Definisci ip prefix-list peerIn permit <RETE_DEL_PEER>"
+             # Se vuoto, la prefix list sarà vuota -> deny all implicito.
+             pass
+
+        print("Inserisci le TUE reti da annunciare al peer (separate da virgola):")
+        my_nets = input("> ").strip()
+        if my_nets:
+             for net in my_nets.replace(',', ' ').split():
+                lines_to_append.append(f"ip prefix-list {pl_out} permit {net}")
+
+        print("Inserisci le reti dei tuoi CLIENTI da annunciare al peer (separate da virgola):")
+        cust_nets = input("> ").strip()
+        if cust_nets:
+             for net in cust_nets.replace(',', ' ').split():
+                lines_to_append.append(f"ip prefix-list {pl_out} permit {net}")
+
+    # Scrivi le prefix-list nel file (append global)
+    with open(fpath, 'a') as f:
+        f.write('\n')
+        for l in lines_to_append:
+            f.write(l + '\n')
+    
+    # Collega le prefix-list al neighbor
+    neigh_lines = [
+        f"neighbor {neigh_ip} prefix-list {pl_in} in",
+        f"neighbor {neigh_ip} prefix-list {pl_out} out"
+    ]
+    insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=neigh_lines)
+
+    print(f"✅ Configurazione {rel_type.upper()} applicata su {target} verso {neigh_name}.")
+
+
 def menu_post_creazione(base_path, routers):
     while True:
         items = [
@@ -1945,7 +2092,8 @@ def menu_post_creazione(base_path, routers):
             'Genera comando ping per tutti gli indirizzi del lab (copia/incolla)',
             'Aggiungi Policies BGP a un router',
             'Assegna un file resolv.conf specifico a un dispositivo',
-            "Aggiungi loopback a un dispositivo"
+            "Aggiungi loopback a un dispositivo",
+            "Aggiungi configurazione Customer-Provider"
         ]
         print_menu('-------------- Menu post-creazione --------------', items, extra_options=[('0', 'Termina Programma')])
         # footer: mostrato in basso per identificazione dell'autore
@@ -1987,6 +2135,8 @@ def menu_post_creazione(base_path, routers):
             assegna_resolv_conf(base_path)
         elif choice == '6':
             aggiungi_loopback_menu(base_path, routers)
+        elif choice == '7':
+            aggiungi_customer_provider_wizard(base_path, routers)
         else:
             print('Scelta non valida, riprova.')
 
@@ -2508,11 +2658,12 @@ def main():
     print("  A - Assegna un file resolv.conf specifico a un dispositivo")
     print("  L - Aggiungi loopback a dispositivo in un lab esistente")
     print("  P - Applica Policies BGP")
+    print("  B - Aggiungi configurazione Customer-Provider")
     print("  Q - Esci\n")
     print("--------------------------------------------------------\n")
 
     while True:
-        mode = input_non_vuoto("Digita un'opzione (C/I/R/G/A/L/P/Q): ").strip().lower()
+        mode = input_non_vuoto("Digita un'opzione (C/I/R/G/A/L/P/B/Q): ").strip().lower()
         if not mode:
             continue
         if mode.startswith('q'):
@@ -2636,6 +2787,26 @@ def main():
                 aggiungi_loopback_menu(target, routers_meta)
             except Exception as e:
                 print('Errore caricando il lab o aprendo il menu aggiungi loopback:', e)
+
+            continue
+        if mode.startswith('b'):
+            target = input_non_vuoto('Percorso della directory del lab: ').strip()
+            if not os.path.isdir(target):
+                print(f"Directory non trovata: {target}")
+                continue
+            xmlpath = os.path.join(target, os.path.basename(os.path.normpath(target)) + '.xml')
+            try:
+                if os.path.exists(xmlpath):
+                    lab_name, routers_meta, _, _, _ = load_lab_from_xml(xmlpath)
+                else:
+                    out = rebuild_lab_metadata_and_export(target)
+                    if not out:
+                        print('Impossibile generare metadata del lab.')
+                        continue
+                    lab_name, routers_meta, _, _, _ = load_lab_from_xml(out)
+                aggiungi_customer_provider_wizard(target, routers_meta)
+            except Exception as e:
+                print('Errore:', e)
             continue
         print('Scelta non valida, riprova.')
 
