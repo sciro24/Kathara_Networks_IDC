@@ -150,7 +150,7 @@ To start the tool, run the following command in your terminal:
 
 ```bash
 python3 labGenerator.py
-
+```
 
 ### Main Menu
 
