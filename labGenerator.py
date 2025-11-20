@@ -1405,13 +1405,14 @@ def policies_menu(base_path, routers):
         items = [
             'Aggiungi prefix-list (deny <rete> e permit any) e collega al neighbor (in/out)',
             'Aggiungi route-map prefIn (set local-preference) e collega al neighbor (in)',
-            'Aggiungi route-map localMedOut (set metric) e collega al neighbor (out)'
+            'Aggiungi route-map localMedOut (set metric) e collega al neighbor (out)',
+            'Aggiungi access-list (deny rete, permit any) e collega al neighbor (in)'
         ]
         print_menu('=== Policies BGP (scegli) ===', items, extra_options=[('0', 'Torna indietro')])
         c = input('Seleziona (numero): ').strip()
         if c == '0':
             break
-        if c not in ('1','2','3'):
+        if c not in ('1','2','3','4'):
             print('Scelta non valida.')
             continue
 
@@ -1496,6 +1497,50 @@ def policies_menu(base_path, routers):
                     f.write(L + '\n')
             insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=[f"neighbor {neigh_ip} route-map {rm_name} out"])
             print(f"✅ Aggiunta route-map {rm_name} (set metric {m_val}) su {src} per neighbor {neigh_ip} (out).")
+
+        elif c == '4':
+            # access-list 10 deny <rete> + permit any; route-map FILTER_IN permit 10 match ip address 10; neighbor ... route-map FILTER_IN in
+            rete = input_non_vuoto('Rete da bloccare in ingresso (es. 10.0.1.0/24): ').strip()
+            try:
+                net = ipaddress.ip_network(rete, strict=False)
+                rete_str = str(net)
+            except Exception:
+                print('Rete non valida.')
+                continue
+            
+            # Trova un ID access-list libero (semplice euristica: inizia da 10 e incrementa se trova collisioni nel file, 
+            # ma per semplicità qui usiamo 10 e se c'è già speriamo non confligga o l'utente gestisca. 
+            # Meglio: leggiamo il file per vedere se "access-list 10" esiste già? 
+            # L'utente ha chiesto specificamente "access-list 10", ma se lo facciamo più volte potrebbe servire diverso.
+            # Per ora usiamo 10 come da esempio, o chiediamo? L'utente ha detto "come esempio usa questo schema", 
+            # ma se lo faccio due volte sullo stesso router con reti diverse, non posso usare sempre 10.
+            # Facciamo che cerchiamo un ID libero partendo da 10.
+            acl_id = 10
+            existing_content = ""
+            if os.path.exists(fpath):
+                with open(fpath, 'r') as f:
+                    existing_content = f.read()
+            
+            while f"access-list {acl_id}" in existing_content:
+                acl_id += 10
+            
+            rm_name = f"FILTER_IN_{neigh_ip.replace('.','_')}"
+            
+            stanza = []
+            stanza.append(f"access-list {acl_id} deny {rete_str}")
+            stanza.append(f"access-list {acl_id} permit any")
+            stanza.append("")
+            stanza.append(f"route-map {rm_name} permit 10")
+            stanza.append(f" match ip address {acl_id}")
+            stanza.append("")
+            
+            with open(fpath, 'a') as f:
+                f.write('\n')
+                for L in stanza:
+                    f.write(L + '\n')
+            
+            insert_lines_into_protocol_block(fpath, proto='bgp', asn=None, lines=[f"neighbor {neigh_ip} route-map {rm_name} in"])
+            print(f"✅ Aggiunta access-list {acl_id} (deny {rete_str}) e route-map {rm_name} su {src} per neighbor {neigh_ip} (in).")
 
 
 def assegna_resolv_conf(base_path):
@@ -1898,7 +1943,7 @@ def menu_post_creazione(base_path, routers):
             'Imposta costo OSPF su una interfaccia di un router',
             'Rigenera file XML del laboratorio (da file modificati)',
             'Genera comando ping per tutti gli indirizzi del lab (copia/incolla)',
-            'Policies (prefix-list / route-map semplificate per BGP)',
+            'Aggiungi Policies BGP a un router',
             'Assegna un file resolv.conf specifico a un dispositivo',
             "Aggiungi loopback a un dispositivo"
         ]
