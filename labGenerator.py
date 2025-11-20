@@ -668,8 +668,12 @@ def crea_www_file(base_path, name, ip_cidr, gateway_cidr, lan):
     www_dir = os.path.join(base_path, name, "var", "www", "html")
     os.makedirs(www_dir, exist_ok=True)
     index_path = os.path.join(www_dir, "index.html")
+    
+    # Usa il nome del server nel titolo e nel corpo
+    html_content = f"<html><head><title>{name}</title></head><body><h1>Server {name}</h1></body></html>"
+    
     with open(index_path, "w") as f:
-        f.write(WWW_INDEX)
+        f.write(html_content)
     startup_path = os.path.join(base_path, f"{name}.startup")
     # rimuovi la maschera dal gateway per la route (mantieni la maschera sull'IP dell'interfaccia)
     gateway = gateway_cidr.split('/')[0] if '/' in gateway_cidr else gateway_cidr
@@ -2981,20 +2985,64 @@ def main():
             break
         used_names.add(hname)
         print(f"--- Configurazione host {hname} ---")
-        # richiedi IP controllando duplicati
-        while True:
-            ip = valida_ip_cidr(f"IP per {hname} (es. 192.168.10.{h}/24): ")
-            ip_only = ip.split('/')[0]
-            if ip_only in used_ips:
-                print(f"❌ Errore: l'IP {ip_only} è già stato assegnato. Scegli un altro IP.")
-                continue
-            used_ips.add(ip_only)
-            break
-        gw = valida_ip_cidr(f"Gateway per {hname} (es. 192.168.10.1/24): ")
-        lan = input_lan("LAN associata (es. A): ")
-        crea_host_file(lab_path, hname, ip, gw, lan)
-        hosts.append({"name": hname, "ip": ip, "gateway": gw, "lan": lan})
-        lab_conf_lines.append(f"{hname}[0]={lan}")
+        
+        n_if_host = input_int(f"Numero interfacce per {hname}: ", 1)
+        host_interfaces = []
+        
+        for idx in range(n_if_host):
+            eth = f"eth{idx}"
+            print(f"  Configurazione {eth}:")
+            # richiedi IP controllando duplicati
+            while True:
+                ip = valida_ip_cidr(f"    IP per {eth} (es. 192.168.10.{h}/24): ")
+                ip_only = ip.split('/')[0]
+                if ip_only in used_ips:
+                    print(f"❌ Errore: l'IP {ip_only} è già stato assegnato. Scegli un altro IP.")
+                    continue
+                used_ips.add(ip_only)
+                break
+            lan = input_lan(f"    LAN associata a {eth} (es. A): ")
+            host_interfaces.append({"name": eth, "ip": ip, "lan": lan})
+            lab_conf_lines.append(f"{hname}[{idx}]={lan}")
+
+        # Gateway (opzionale, o globale per l'host)
+        # Se ha più interfacce, potrebbe avere più gateway o rotte specifiche.
+        # Per semplicità manteniamo un gateway di default principale, o chiediamo rotte.
+        # Qui chiediamo un gateway di default generico.
+        gw = input(f"Gateway di default per {hname} (invio per nessuno): ").strip()
+        gw_dev = ""
+        if gw:
+            # validazione base
+            try:
+                # accetta sia IP che IP/CIDR (prendiamo solo IP)
+                gw = gw.split('/')[0]
+                ipaddress.ip_address(gw)
+                
+                # Chiedi interfaccia
+                gw_dev = input(f"Interfaccia per il gateway {gw} (default eth0): ").strip()
+                if not gw_dev:
+                    gw_dev = "eth0"
+            except ValueError:
+                print("⚠️ Gateway non valido, ignorato.")
+                gw = ""
+
+        # crea_host_file ora deve gestire multiple interfacce
+        # Dobbiamo aggiornare crea_host_file o gestirlo qui inline?
+        # crea_host_file è definita altrove, controlliamola.
+        # Se crea_host_file accetta solo 1 IP/LAN, dobbiamo modificarla o non usarla.
+        # Controlliamo crea_host_file.
+        # Per ora assumiamo di doverla riscrivere o adattare.
+        # Invece di chiamare crea_host_file(..., ip, gw, lan), scriviamo direttamente qui o chiamiamo una nuova funzione.
+        
+        # Scrittura file .startup
+        startup_path = os.path.join(lab_path, f"{hname}.startup")
+        with open(startup_path, 'w') as f:
+            for iface in host_interfaces:
+                f.write(f"ip address add {iface['ip']} dev {iface['name']}\n")
+            if gw:
+                f.write(f"ip route add default via {gw} dev {gw_dev}\n")
+
+        hosts.append({"name": hname, "interfaces": host_interfaces, "gateway": gw})
         lab_conf_lines.append(f'{hname}[image]="kathara/base"')
         lab_conf_lines.append("")
 
