@@ -1426,14 +1426,19 @@ def policies_menu(base_path, routers):
             'Aggiungi prefix-list (deny <rete> e permit any) e collega al neighbor (in/out)',
             'Aggiungi route-map prefIn (set local-preference) e collega al neighbor (in)',
             'Aggiungi route-map localMedOut (set metric) e collega al neighbor (out)',
-            'Aggiungi access-list (deny rete, permit any) e collega al neighbor (in)'
+            'Aggiungi access-list (deny rete, permit any) e collega al neighbor (in)',
+            'Aggiungi configurazione Customer-Provider'
         ]
         print_menu('=== Policies BGP (scegli) ===', items, extra_options=[('0', 'Torna indietro')])
         c = input('Seleziona (numero): ').strip()
         if c == '0':
             break
-        if c not in ('1','2','3','4'):
+        if c not in ('1','2','3','4','5'):
             print('Scelta non valida.')
+            continue
+
+        if c == '5':
+            aggiungi_customer_provider_wizard(base_path, routers)
             continue
 
         src = select_router(routers, prompt='Seleziona il router su cui applicare la policy:')
@@ -2139,8 +2144,7 @@ def menu_post_creazione(base_path, routers):
             'Genera comando ping per tutti gli indirizzi del lab (copia/incolla)',
             'Aggiungi Policies BGP a un router',
             'Assegna un file resolv.conf specifico a un dispositivo',
-            "Aggiungi loopback a un dispositivo",
-            "Aggiungi configurazione Customer-Provider"
+            "Aggiungi loopback a un dispositivo"
         ]
         print_menu('-------------- Menu post-creazione --------------', items, extra_options=[('0', 'Termina Programma')])
         # footer: mostrato in basso per identificazione dell'autore
@@ -2182,8 +2186,6 @@ def menu_post_creazione(base_path, routers):
             assegna_resolv_conf(base_path)
         elif choice == '6':
             aggiungi_loopback_menu(base_path, routers)
-        elif choice == '7':
-            aggiungi_customer_provider_wizard(base_path, routers)
         else:
             print('Scelta non valida, riprova.')
 
@@ -2705,12 +2707,11 @@ def main():
     print("  A - Assegna un file resolv.conf specifico a un dispositivo")
     print("  L - Aggiungi loopback a dispositivo in un lab esistente")
     print("  P - Applica Policies BGP")
-    print("  B - Aggiungi configurazione Customer-Provider")
     print("  Q - Esci\n")
     print("--------------------------------------------------------\n")
 
     while True:
-        mode = input_non_vuoto("Digita un'opzione (C/I/R/G/A/L/P/B/Q): ").strip().lower()
+        mode = input_non_vuoto("Digita un'opzione (C/I/R/G/A/L/P/Q): ").strip().lower()
         if not mode:
             continue
         if mode.startswith('q'):
@@ -2834,26 +2835,6 @@ def main():
                 aggiungi_loopback_menu(target, routers_meta)
             except Exception as e:
                 print('Errore caricando il lab o aprendo il menu aggiungi loopback:', e)
-
-            continue
-        if mode.startswith('b'):
-            target = input_non_vuoto('Percorso della directory del lab: ').strip()
-            if not os.path.isdir(target):
-                print(f"Directory non trovata: {target}")
-                continue
-            xmlpath = os.path.join(target, os.path.basename(os.path.normpath(target)) + '.xml')
-            try:
-                if os.path.exists(xmlpath):
-                    lab_name, routers_meta, _, _, _ = load_lab_from_xml(xmlpath)
-                else:
-                    out = rebuild_lab_metadata_and_export(target)
-                    if not out:
-                        print('Impossibile generare metadata del lab.')
-                        continue
-                    lab_name, routers_meta, _, _, _ = load_lab_from_xml(out)
-                aggiungi_customer_provider_wizard(target, routers_meta)
-            except Exception as e:
-                print('Errore:', e)
             continue
         print('Scelta non valida, riprova.')
 
