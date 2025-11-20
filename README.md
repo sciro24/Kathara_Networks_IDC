@@ -90,26 +90,83 @@ The exercises cover multi-protocol routing setup, inter-domain and intra-domain 
 
 # LabGenerator
 
-- **Scopo:** Generatore di laboratori Kathará/FRR che crea directory per router, host e server WWW, produce file `startup` e configurazioni FRR (`etc/frr/frr.conf`) automaticamente.
+## 📋 Descrizione
 
-**Funzionamento veloce**
-- Modalità interattiva: esegui `python3 labGenerator.py` e segui i prompt per creare router, host e WWW.
+`labGenerator.py` è uno strumento Python interattivo progettato per automatizzare la creazione di laboratori Kathara per l'emulazione di reti complesse. Il tool semplifica notevolmente il processo di configurazione di router, host, server web e server DNS, generando automaticamente tutti i file di configurazione necessari per i protocolli di routing (BGP, OSPF, RIP) tramite FRRouting (FRR).
 
+## ✨ Funzionalità Principali
 
-**Output principali**
-- Per ogni router creato: directory `/<lab>/<router>/etc/frr/` contenente `frr.conf` e `vtysh.conf`, oltre a `<router>.startup` nella root del lab.
-- Per host/www: file `<name>.startup` e, per WWW, `var/www/html/index.html`.
+### 🔧 Modalità di Funzionamento
+
+Il generatore supporta diverse modalità operative:
+
+1. **Creazione Interattiva** - Crea un nuovo laboratorio passo-passo con assistenza guidata
+2. **Importazione da File** - Importa configurazioni esistenti da file XML/JSON
+3. **Rigenerazione XML** - Ricostruisce il file XML di metadati da un lab esistente
+4. **Generazione Comandi PING** - Crea automaticamente comandi ping per testare la connettività tra tutti i dispositivi
+5. **Configurazione DNS** - Assegna file `resolv.conf` personalizzati ai dispositivi
+6. **Gestione Loopback** - Aggiunge interfacce loopback a dispositivi esistenti
+7. **Policy BGP** - Applica policy BGP avanzate (access-list, prefix-list, route-map, customer-provider)
+
+### 📦 Componenti Supportati
+
+- **Router FRR**: Configurazione automatica di router con supporto per:
+  - BGP (Border Gateway Protocol)
+  - OSPF (Open Shortest Path First) - single-area e multi-area
+  - RIP (Routing Information Protocol)
+  - Routing statico
+  - Aggregazione automatica delle reti
+  - Policy BGP avanzate
+  
+- **Host**: Dispositivi endpoint con configurazione IP e gateway
+  - Supporto interfacce multiple
+  - Route statiche personalizzabili
+
+- **Server WWW**: Server Apache con pagine HTML personalizzate
+  - Generazione automatica di `index.html`
+  - Configurazione IP e routing
+
+- **Server DNS (BIND9)**: Server DNS con supporto completo
+  - Root server o recursive resolver
+  - Zone authoritative personalizzate
+  - Forwarders configurabili
+  - Record A, NS, CNAME, PTR
+
+## 🚀 Uso del Tool
+
+### Prerequisiti
+
+- Python 3.x
+- Kathara installato
+- Docker installato
+
+### Avvio
+
+```bash
+python3 labGenerator.py
+```
+
+### Menu Principale
+
+Quando si avvia in modalità interattiva, il tool presenta le seguenti opzioni:
+
+```
+C - Crea nuovo laboratorio (interattivo)
+I - Importa da file (XML/JSON)
+R - Rigenera XML di un lab esistente
+G - Genera comando PING per un lab esistente
+A - Assegna un file resolv.conf specifico a un dispositivo
+L - Aggiungi loopback a dispositivo in un lab esistente
+P - Applica Policies BGP
+Q - Esci
+```
 
 
 ---
-
-### 🧠 Notes
-All labs are designed for the **Kathara network emulation environment**.  
-Each folder includes its own `lab.conf` topology file and startup configuration scripts for routers, switches, and hosts.
 
 ---
 
 ### 🏫 Author
 **Diego** – Computer Engineering student at *Roma Tre University*  
-**Born from an idea by Rainer Cabral Ilao**
+*Born from an idea by Rainer Cabral Ilao*
 
