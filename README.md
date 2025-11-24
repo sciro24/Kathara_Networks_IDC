@@ -6,7 +6,7 @@ The labs are used to practice network configuration, routing, and data center de
 ---
 
 > [!NOTE]
-> **I have developed [labGenerator](https://github.com/sciro24/Kathara_labGenerator)**, a tool that allows you to automatically generate laboratories with all necessary configurations.  
+> **I have developed [labGenerator](https://github.com/sciro24/Kathara_labGenerator)**, a tool that allows you to **automatically** generate laboratories with all necessary configurations (BGP, OSPF, RIP, Loopback, Web Server, DNS Server).  
 > For more information and to use the tool, visit the dedicated repository: **[Kathara_labGenerator](https://github.com/sciro24/Kathara_labGenerator)**
 
 ---
