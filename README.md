@@ -3,9 +3,11 @@
 This repository contains a collection of **Kathara** lab exercises developed for the *Internet and Data Centers* course at **Roma Tre University**.  
 The labs are used to practice network configuration, routing, and data center design topics covered during the course.
 
-🚀 The repository includes **labGenerator**, a tool designed to help automatically build a complete lab environment, streamlining the creation of all its components.
+---
 
-[🛠️ LAB GENERATOR](#labgenerator)
+> [!NOTE]
+> **I have developed [labGenerator](https://github.com/sciro24/Kathara_labGenerator)**, a tool that allows you to automatically generate laboratories with all necessary configurations.  
+> For more information and to use the tool, visit the dedicated repository: **[Kathara_labGenerator](https://github.com/sciro24/Kathara_labGenerator)**
 
 ---
 
@@ -56,10 +58,10 @@ The exercises cover BGP setup in multi-AS environments, route filtering and pref
 
 ---
 
-## 🧩 Partial Exam 3 – DNS
+## 🧩 Partial Exam 3 – Customer/Provider, Loopback and Web Server
 
-This section includes the labs used to prepare for the **third midterm**, focused on **BGP**, **IGP** (OSPF/RIP), and **DNS** configuration.
-The exercises cover multi-protocol routing setup, inter-domain and intra-domain traffic management, and the deployment and troubleshooting of DNS services in a networked environment.
+This section includes the labs used to prepare for the **third midterm**, focused on **Customer-Provider configuration**, **Loopback interfaces**, and **Web Server** setup.
+The exercises cover the implementation of customer-provider relationships in BGP networks, the configuration of loopback interfaces for router identification and stability, and the deployment of web servers in a networked environment.
 
 
 **LABS:**
@@ -88,89 +90,6 @@ The exercises cover multi-protocol routing setup, inter-domain and intra-domain 
 
 ---
 
-# LabGenerator
-
-## 📋 Description
-
-`labGenerator.py` is an interactive Python tool designed to automate the creation of **Kathara labs** for complex network emulation. The tool significantly simplifies the process of configuring routers, hosts, web servers, and DNS servers, automatically generating all the necessary configuration files for routing protocols (**BGP, OSPF, RIP**) using **FRRouting (FRR)**.
-
----
-
-## ✨ Key Features
-
-### 🔧 Operating Modes
-
-The generator supports various operating modes:
-
-1.  **Interactive Creation** - Creates a new lab step-by-step with guided assistance.
-2.  **File Import** - Imports existing configurations from XML/JSON files.
-3.  **XML Regeneration** - Rebuilds the metadata XML file from an existing lab.
-4.  **PING Command Generation** - Automatically creates ping commands to test connectivity between all devices.
-5.  **DNS Configuration** - Assigns customized `resolv.conf` files to devices.
-6.  **Loopback Management** - Adds loopback interfaces to existing devices.
-7.  **BGP Policy** - Applies advanced BGP policies (**access-list, prefix-list, route-map, customer-provider**).
-
-### 📦 Supported Components
-
-* **FRR Router**: Automatic configuration with support for:
-    * **BGP** (Border Gateway Protocol)
-    * **OSPF** (Open Shortest Path First) - single-area and multi-area
-    * **RIP** (Routing Information Protocol)
-    * Static Routing
-    * Automatic network aggregation
-    * Advanced BGP policies
-
-* **Host**: Endpoint devices with IP and gateway configuration:
-    * Multiple interface support
-    * Customizable static routes
-
-* **WWW Server**: Apache server with custom HTML pages:
-    * Automatic `index.html` generation
-    * IP and routing configuration
-
-* **DNS Server (BIND9)**: Full-featured DNS server support:
-    * Root server or recursive resolver
-    * Custom authoritative zones
-    * Configurable forwarders
-    * A, NS, CNAME, PTR records
-
----
-
-## 🚀 Tool Usage
-
-### Prerequisites
-
-* Python 3.x
-* Kathara installed
-* Docker installed
-
-### Run
-
-To start the tool, run the following command in your terminal:
-
-```bash
-python3 labGenerator.py
-```
-
-### Main Menu
-
-When launched in interactive mode, the tool presents the following options:
-
-```
-C - Crea nuovo laboratorio (interattivo)
-I - Importa da file (XML/JSON)
-R - Rigenera XML di un lab esistente
-G - Genera comando PING per un lab esistente
-A - Assegna un file resolv.conf specifico a un dispositivo
-L - Aggiungi loopback a dispositivo in un lab esistente
-P - Applica Policies BGP
-Q - Esci
-```
-
-
----
-
----
 
 ### 🏫 Author
 **Diego Scirocco** – Computer Engineering student at *Roma Tre University*  
