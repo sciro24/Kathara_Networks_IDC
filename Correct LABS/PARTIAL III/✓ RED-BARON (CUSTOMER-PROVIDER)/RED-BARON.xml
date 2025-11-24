@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lab name="RED-BARON">
+  <routers>
+    <router name="r1">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>1</asn>
+      <interfaces>
+        <interface name="eth0" lan="C" ip="100.1.0.1/16"/>
+        <interface name="eth1" lan="G" ip="101.202.0.3/24"/>
+        <interface name="eth2" lan="E" ip="50.10.1.2/24"/>
+      </interfaces>
+    </router>
+    <router name="r2">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>2</asn>
+      <interfaces>
+        <interface name="eth0" lan="G" ip="101.202.0.1/24"/>
+        <interface name="eth1" lan="P" ip="200.2.0.3/16"/>
+        <interface name="eth2" lan="L" ip="50.20.2.2/24"/>
+      </interfaces>
+    </router>
+    <router name="r10">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>10</asn>
+      <interfaces>
+        <interface name="eth0" lan="B" ip="100.10.0.1/16"/>
+        <interface name="eth1" lan="E" ip="50.10.1.4/24"/>
+        <interface name="eth2" lan="F" ip="110.220.0.3/24"/>
+        <interface name="eth3" lan="D" ip="50.100.10.2/24"/>
+      </interfaces>
+    </router>
+    <router name="r100">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>100</asn>
+      <interfaces>
+        <interface name="eth0" lan="A" ip="100.100.0.1/16"/>
+        <interface name="eth1" lan="D" ip="50.100.10.4/24"/>
+      </interfaces>
+    </router>
+    <router name="r20">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>20</asn>
+      <interfaces>
+        <interface name="eth0" lan="F" ip="110.220.0.1/24"/>
+        <interface name="eth1" lan="L" ip="50.20.2.4/24"/>
+        <interface name="eth2" lan="N" ip="200.20.0.3/16"/>
+        <interface name="eth3" lan="H" ip="50.200.20.2/24"/>
+      </interfaces>
+    </router>
+    <router name="r200">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>200</asn>
+      <interfaces>
+        <interface name="eth0" lan="H" ip="50.200.20.4/24"/>
+        <interface name="eth1" lan="M" ip="200.200.0.3/16"/>
+      </interfaces>
+    </router>
+  </routers>
+  <hosts/>
+  <www/>
+  <lab_conf>r1[0]=C
+r1[1]=G
+r1[2]=E
+r1[image]=&quot;kathara/frr&quot;
+
+r2[0]=G
+r2[1]=P
+r2[2]=L
+r2[image]=&quot;kathara/frr&quot;
+
+r10[0]=B
+r10[1]=E
+r10[2]=F
+r10[3]=D
+r10[image]=&quot;kathara/frr&quot;
+
+r100[0]=A
+r100[1]=D
+r100[image]=&quot;kathara/frr&quot;
+
+r20[0]=F
+r20[1]=L
+r20[2]=N
+r20[3]=H
+r20[image]=&quot;kathara/frr&quot;
+
+r200[0]=H
+r200[1]=M
+r200[image]=&quot;kathara/frr&quot;
+</lab_conf>
+</lab>
