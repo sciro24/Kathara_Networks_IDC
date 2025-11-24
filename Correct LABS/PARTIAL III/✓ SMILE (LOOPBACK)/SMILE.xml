@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lab name="SMILE">
+  <routers>
+    <router name="rxa4">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>7</asn>
+      <interfaces>
+        <interface name="eth0" lan="X" ip="7.7.7.7/25"/>
+        <interface name="eth1" lan="A" ip="50.7.1.7/24"/>
+      </interfaces>
+    </router>
+    <router name="rdy8">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>8</asn>
+      <interfaces>
+        <interface name="eth0" lan="Y" ip="8.8.8.8/25"/>
+        <interface name="eth1" lan="D" ip="50.3.8.8/24"/>
+      </interfaces>
+    </router>
+    <router name="rabe1">
+      <protocols>
+        <protocol>bgp</protocol>
+        <protocol>rip</protocol>
+      </protocols>
+      <asn>100</asn>
+      <interfaces>
+        <interface name="eth0" lan="E" ip="100.1.4.1/24"/>
+        <interface name="eth1" lan="A" ip="50.7.1.1/24"/>
+        <interface name="eth2" lan="B" ip="100.1.2.1/24"/>
+      </interfaces>
+    </router>
+    <router name="reg4">
+      <protocols>
+        <protocol>rip</protocol>
+      </protocols>
+      <interfaces>
+        <interface name="eth0" lan="E" ip="100.1.4.4/24"/>
+        <interface name="eth1" lan="G" ip="100.4.5.4/24"/>
+      </interfaces>
+    </router>
+    <router name="rgf5">
+      <protocols>
+        <protocol>rip</protocol>
+      </protocols>
+      <interfaces>
+        <interface name="eth0" lan="G" ip="100.4.5.5/24"/>
+        <interface name="eth1" lan="F" ip="100.3.5.5/24"/>
+      </interfaces>
+    </router>
+    <router name="rbc2">
+      <protocols>
+        <protocol>rip</protocol>
+      </protocols>
+      <interfaces>
+        <interface name="eth0" lan="B" ip="100.1.2.2/24"/>
+        <interface name="eth1" lan="C" ip="100.2.3.2/24"/>
+      </interfaces>
+    </router>
+    <router name="rcdf3">
+      <protocols>
+        <protocol>bgp</protocol>
+        <protocol>rip</protocol>
+      </protocols>
+      <asn>100</asn>
+      <interfaces>
+        <interface name="eth0" lan="F" ip="100.3.5.3/24"/>
+        <interface name="eth1" lan="C" ip="100.2.3.3/24"/>
+        <interface name="eth2" lan="D" ip="50.3.8.3/24"/>
+      </interfaces>
+    </router>
+  </routers>
+  <hosts/>
+  <www/>
+  <lab_conf>rxa4[0]=X
+rxa4[1]=A
+rxa4[image]=&quot;kathara/frr&quot;
+
+rdy8[0]=Y
+rdy8[1]=D
+rdy8[image]=&quot;kathara/frr&quot;
+
+rabe1[0]=E
+rabe1[1]=A
+rabe1[2]=B
+rabe1[image]=&quot;kathara/frr&quot;
+
+reg4[0]=E
+reg4[1]=G
+reg4[image]=&quot;kathara/frr&quot;
+
+rgf5[0]=G
+rgf5[1]=F
+rgf5[image]=&quot;kathara/frr&quot;
+
+rbc2[0]=B
+rbc2[1]=C
+rbc2[image]=&quot;kathara/frr&quot;
+
+rcdf3[0]=F
+rcdf3[1]=C
+rcdf3[2]=D
+rcdf3[image]=&quot;kathara/frr&quot;
+</lab_conf>
+</lab>
