@@ -66,7 +66,9 @@ The exercises cover the implementation of customer-provider relationships in BGP
 
 
 **LABS:**
-- ⚙️
+- ⚙️ [RED-BARON (CUSTOMER-PROVIDER)](./Correct%20LABS/PARTIAL%20III/%E2%9C%93%20RED-BARON%20%28CUSTOMER-PROVIDER%29/)
+- ⚙️ [SMILE (LOOPBACK)](./Correct%20LABS/PARTIAL%20III/%E2%9C%93%20SMILE%20%28LOOPBACK%29/)
+
 
 
 
@@ -79,7 +81,7 @@ The exercises cover the implementation of customer-provider relationships in BGP
 
 ---
 
-## ☁️ Partial Exam 4 – 
+## ☁️ Partial Exam 4 – DNS & Data Center
 
 
 
