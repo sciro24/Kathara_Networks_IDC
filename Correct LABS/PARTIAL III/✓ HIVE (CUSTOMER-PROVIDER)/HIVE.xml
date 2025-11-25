@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lab name="HIVE">
+  <routers>
+    <router name="as1r1">
+      <protocols>
+        <protocol>bgp</protocol>
+        <protocol>rip</protocol>
+      </protocols>
+      <asn>1</asn>
+      <interfaces>
+        <interface name="eth0" lan="A" ip="1.1.2.1/24"/>
+        <interface name="eth1" lan="C" ip="1.1.3.1/24"/>
+        <interface name="eth2" lan="G" ip="10.1.4.1/30"/>
+        <interface name="eth3" lan="M" ip="10.1.2.1/30"/>
+      </interfaces>
+    </router>
+    <router name="as1r2">
+      <protocols>
+        <protocol>rip</protocol>
+      </protocols>
+      <interfaces>
+        <interface name="eth0" lan="A" ip="1.1.2.2/24"/>
+        <interface name="eth1" lan="B" ip="1.2.3.2/24"/>
+      </interfaces>
+    </router>
+    <router name="as1r3">
+      <protocols>
+        <protocol>bgp</protocol>
+        <protocol>rip</protocol>
+      </protocols>
+      <asn>1</asn>
+      <interfaces>
+        <interface name="eth0" lan="H" ip="10.1.5.1/30"/>
+        <interface name="eth1" lan="C" ip="1.1.3.3/24"/>
+        <interface name="eth2" lan="B" ip="1.2.3.3/24"/>
+      </interfaces>
+    </router>
+    <router name="as4r1">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>4</asn>
+      <interfaces>
+        <interface name="eth0" lan="F" ip="4.0.0.1/24"/>
+        <interface name="eth1" lan="I" ip="10.2.4.2/30"/>
+        <interface name="eth2" lan="G" ip="10.1.4.2/30"/>
+        <interface name="eth3" lan="H" ip="10.1.5.2/30"/>
+      </interfaces>
+    </router>
+    <router name="as2r1">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>2</asn>
+      <interfaces>
+        <interface name="eth0" lan="L" ip="10.2.3.1/30"/>
+        <interface name="eth1" lan="D" ip="2.0.0.1/24"/>
+        <interface name="eth2" lan="M" ip="10.1.2.2/30"/>
+        <interface name="eth3" lan="I" ip="10.2.4.1/30"/>
+      </interfaces>
+    </router>
+    <router name="as3r1">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>3</asn>
+      <interfaces>
+        <interface name="eth0" lan="L" ip="10.2.3.2/30"/>
+        <interface name="eth1" lan="E" ip="3.0.0.1/8"/>
+      </interfaces>
+    </router>
+  </routers>
+  <hosts/>
+  <www/>
+  <lab_conf>as1r1[0]=A
+as1r1[1]=C
+as1r1[2]=G
+as1r1[3]=M
+as1r1[image]=&quot;kathara/frr&quot;
+
+as1r2[0]=A
+as1r2[1]=B
+as1r2[image]=&quot;kathara/frr&quot;
+
+as1r3[0]=H
+as1r3[1]=C
+as1r3[2]=B
+as1r3[image]=&quot;kathara/frr&quot;
+
+as4r1[0]=F
+as4r1[1]=I
+as4r1[2]=G
+as4r1[3]=H
+as4r1[image]=&quot;kathara/frr&quot;
+
+as2r1[0]=L
+as2r1[1]=D
+as2r1[2]=M
+as2r1[3]=I
+as2r1[image]=&quot;kathara/frr&quot;
+
+as3r1[0]=L
+as3r1[1]=E
+as3r1[image]=&quot;kathara/frr&quot;
+</lab_conf>
+</lab>
