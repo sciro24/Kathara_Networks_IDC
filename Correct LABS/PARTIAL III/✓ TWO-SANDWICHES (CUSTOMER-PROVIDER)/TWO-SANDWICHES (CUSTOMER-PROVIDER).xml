@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lab name="TWO-SANDWICHES (CUSTOMER-PROVIDER)">
+  <routers>
+    <router name="r1">
+      <protocols>
+        <protocol>bgp</protocol>
+        <protocol>rip</protocol>
+      </protocols>
+      <asn>1</asn>
+      <interfaces>
+        <interface name="eth0" lan="L" ip="41.0.0.1/24"/>
+        <interface name="eth1" lan="B" ip="100.20.0.1/24"/>
+      </interfaces>
+    </router>
+    <router name="r2">
+      <protocols>
+        <protocol>rip</protocol>
+      </protocols>
+      <interfaces>
+        <interface name="eth0" lan="B" ip="100.20.0.2/24"/>
+        <interface name="eth1" lan="C" ip="100.30.0.1/24"/>
+        <interface name="eth2" lan="A" ip="100.10.0.1/24"/>
+      </interfaces>
+    </router>
+    <router name="r3">
+      <protocols>
+        <protocol>bgp</protocol>
+        <protocol>rip</protocol>
+      </protocols>
+      <asn>1</asn>
+      <interfaces>
+        <interface name="eth0" lan="C" ip="100.30.0.2/24"/>
+        <interface name="eth1" lan="X" ip="5.5.5.1/24"/>
+      </interfaces>
+    </router>
+    <router name="r4">
+      <protocols>
+        <protocol>bgp</protocol>
+        <protocol>rip</protocol>
+      </protocols>
+      <asn>2</asn>
+      <interfaces>
+        <interface name="eth0" lan="X" ip="5.5.5.2/24"/>
+        <interface name="eth1" lan="E" ip="200.10.0.1/24"/>
+      </interfaces>
+    </router>
+    <router name="r5">
+      <protocols>
+        <protocol>bgp</protocol>
+        <protocol>rip</protocol>
+      </protocols>
+      <asn>2</asn>
+      <interfaces>
+        <interface name="eth0" lan="E" ip="200.10.0.2/24"/>
+        <interface name="eth1" lan="G" ip="200.30.0.1/24"/>
+        <interface name="eth2" lan="F" ip="200.20.0.1/24"/>
+        <interface name="eth3" lan="M" ip="32.0.0.2/24"/>
+      </interfaces>
+    </router>
+    <router name="r6">
+      <protocols>
+        <protocol>rip</protocol>
+      </protocols>
+      <interfaces>
+        <interface name="eth0" lan="G" ip="200.30.0.2/24"/>
+        <interface name="eth1" lan="H" ip="200.40.0.1/24"/>
+      </interfaces>
+    </router>
+    <router name="r7">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>4</asn>
+      <interfaces>
+        <interface name="eth0" lan="S" ip="40.20.0.2/25"/>
+        <interface name="eth1" lan="X" ip="5.5.5.4/24"/>
+      </interfaces>
+    </router>
+    <router name="r8">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>3</asn>
+      <interfaces>
+        <interface name="eth0" lan="X" ip="5.5.5.3/24"/>
+        <interface name="eth1" lan="P" ip="30.10.0.1/25"/>
+      </interfaces>
+    </router>
+    <router name="r9">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>3</asn>
+      <interfaces>
+        <interface name="eth0" lan="P" ip="30.10.0.2/25"/>
+        <interface name="eth1" lan="M" ip="32.0.0.3/24"/>
+        <interface name="eth2" lan="Q" ip="30.20.0.1/25"/>
+      </interfaces>
+    </router>
+    <router name="r10">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>4</asn>
+      <interfaces>
+        <interface name="eth0" lan="R" ip="40.10.0.1/25"/>
+        <interface name="eth1" lan="S" ip="40.20.0.1/25"/>
+        <interface name="eth2" lan="L" ip="41.0.0.4/24"/>
+      </interfaces>
+    </router>
+  </routers>
+  <hosts/>
+  <www/>
+  <lab_conf>r1[0]=L
+r1[1]=B
+r1[image]=&quot;kathara/frr&quot;
+
+r2[0]=B
+r2[1]=C
+r2[2]=A
+r2[image]=&quot;kathara/frr&quot;
+
+r3[0]=C
+r3[1]=X
+r3[image]=&quot;kathara/frr&quot;
+
+r4[0]=X
+r4[1]=E
+r4[image]=&quot;kathara/frr&quot;
+
+r5[0]=E
+r5[1]=G
+r5[2]=F
+r5[3]=M
+r5[image]=&quot;kathara/frr&quot;
+
+r6[0]=G
+r6[1]=H
+r6[image]=&quot;kathara/frr&quot;
+
+r7[0]=S
+r7[1]=X
+r7[image]=&quot;kathara/frr&quot;
+
+r8[0]=X
+r8[1]=P
+r8[image]=&quot;kathara/frr&quot;
+
+r9[0]=P
+r9[1]=M
+r9[2]=Q
+r9[image]=&quot;kathara/frr&quot;
+
+r10[0]=R
+r10[1]=S
+r10[2]=L
+r10[image]=&quot;kathara/frr&quot;
+</lab_conf>
+</lab>
