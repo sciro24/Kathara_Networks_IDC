@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lab name="ESAME">
+  <routers>
+    <router name="r1">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>1</asn>
+      <interfaces>
+        <interface name="eth0" lan="C" ip="100.1.0.1/16"/>
+        <interface name="eth1" lan="G" ip="40.1.2.1/24"/>
+        <interface name="eth2" lan="E" ip="40.1.10.1/24"/>
+      </interfaces>
+    </router>
+    <router name="r10">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>10</asn>
+      <interfaces>
+        <interface name="eth0" lan="B" ip="100.10.0.10/16"/>
+        <interface name="eth1" lan="E" ip="40.1.10.10/24"/>
+        <interface name="eth2" lan="F" ip="40.10.200.10/24"/>
+        <interface name="eth3" lan="D" ip="40.10.100.10/24"/>
+      </interfaces>
+    </router>
+    <router name="r100">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>100</asn>
+      <interfaces>
+        <interface name="eth0" lan="A" ip="100.100.0.100/16"/>
+        <interface name="eth1" lan="D" ip="40.10.100.100/24"/>
+      </interfaces>
+    </router>
+    <router name="r2">
+      <protocols>
+        <protocol>bgp</protocol>
+        <protocol>rip</protocol>
+      </protocols>
+      <asn>2</asn>
+      <interfaces>
+        <interface name="eth0" lan="G" ip="40.1.2.2/24"/>
+        <interface name="eth1" lan="P" ip="100.2.0.2/16"/>
+        <interface name="eth2" lan="Q" ip="40.2.30.2/24"/>
+        <interface name="eth3" lan="L" ip="40.2.20.2/24"/>
+      </interfaces>
+    </router>
+    <router name="r20">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>20</asn>
+      <interfaces>
+        <interface name="eth0" lan="H" ip="40.20.200.20/24"/>
+        <interface name="eth1" lan="L" ip="40.2.20.20/24"/>
+        <interface name="eth2" lan="N" ip="100.20.0.20/16"/>
+      </interfaces>
+    </router>
+    <router name="r200">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>200</asn>
+      <interfaces>
+        <interface name="eth0" lan="H" ip="40.20.200.200/24"/>
+        <interface name="eth1" lan="M" ip="100.200.0.200/16"/>
+        <interface name="eth2" lan="F" ip="40.10.200.200/24"/>
+      </interfaces>
+    </router>
+    <router name="b03">
+      <protocols>
+        <protocol>bgp</protocol>
+      </protocols>
+      <asn>30</asn>
+      <interfaces>
+        <interface name="eth0" lan="Q" ip="40.2.30.30/24"/>
+        <interface name="eth1" lan="R" ip="100.30.0.30/16"/>
+      </interfaces>
+    </router>
+    <router name="r3">
+      <protocols>
+        <protocol>bgp</protocol>
+        <protocol>rip</protocol>
+      </protocols>
+      <asn>2</asn>
+      <interfaces>
+        <interface name="eth0" lan="P" ip="100.2.0.3/16"/>
+        <interface name="eth1" lan="S" ip="40.2.220.3/24"/>
+      </interfaces>
+    </router>
+    <router name="r220">
+      <protocols>
+        <protocol>bgp</protocol>
+        <protocol>rip</protocol>
+      </protocols>
+      <asn>220</asn>
+      <interfaces>
+        <interface name="eth0" lan="S" ip="40.2.220.220/24"/>
+        <interface name="eth1" lan="T" ip="100.220.1.220/24"/>
+        <interface name="eth2" lan="Z" ip="100.220.3.220/24"/>
+      </interfaces>
+    </router>
+    <router name="r221">
+      <protocols>
+        <protocol>rip</protocol>
+      </protocols>
+      <interfaces>
+        <interface name="eth0" lan="V" ip="100.220.2.221/24"/>
+        <interface name="eth1" lan="Z" ip="100.220.3.221/24"/>
+      </interfaces>
+    </router>
+  </routers>
+  <hosts/>
+  <www/>
+  <lab_conf>r1[0]=C
+r1[1]=G
+r1[2]=E
+r1[image]=&quot;kathara/frr&quot;
+
+r10[0]=B
+r10[1]=E
+r10[2]=F
+r10[3]=D
+r10[image]=&quot;kathara/frr&quot;
+
+r100[0]=A
+r100[1]=D
+r100[image]=&quot;kathara/frr&quot;
+
+r2[0]=G
+r2[1]=P
+r2[2]=Q
+r2[3]=L
+r2[image]=&quot;kathara/frr&quot;
+
+r20[0]=H
+r20[1]=L
+r20[2]=N
+r20[image]=&quot;kathara/frr&quot;
+
+r200[0]=H
+r200[1]=M
+r200[2]=F
+r200[image]=&quot;kathara/frr&quot;
+
+b03[0]=Q
+b03[1]=R
+b03[image]=&quot;kathara/frr&quot;
+
+r3[0]=P
+r3[1]=S
+r3[image]=&quot;kathara/frr&quot;
+
+r220[0]=S
+r220[1]=T
+r220[2]=Z
+r220[image]=&quot;kathara/frr&quot;
+
+r221[0]=V
+r221[1]=Z
+r221[image]=&quot;kathara/frr&quot;
+</lab_conf>
+</lab>
